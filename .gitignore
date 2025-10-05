@@ -64,3 +64,55 @@ backend/uploads/
 .cache/
 temp/
 tmp/
+
+# Documentation files (exclude from Git)
+# Keep only main README.md
+AUTHENTICATION-FIX-SUMMARY.md
+BACKEND-COMPLETE.md
+DEMO-DOI-AUTOFILL.md
+DOCUMENTATION-INDEX.md
+DOI-AUTOFILL-IMPLEMENTATION-SUMMARY.md
+DOI-AUTOFILL-QUICK-START.md
+DOI-AUTOFILL-TESTING-GUIDE.md
+DOI-AUTOFILL-USER-GUIDE.md
+GIT-COMMANDS.md
+IMPLEMENTATION-SUMMARY.md
+PAPER-AUTOFILL-IMPLEMENTATION.md
+PROJECT-STATUS.md
+PROJECT-SUMMARY.md
+README-GITHUB.md
+TROUBLESHOOTING-404-ERROR.md
+
+# Frontend documentation
+frontend/AI-SUMMARY-COMPLETE.md
+frontend/CITATION-NETWORK-COMPLETE.md
+frontend/LIBRARY-FEATURES-COMPLETE.md
+frontend/NOTE-MANAGEMENT-COMPLETE.md
+frontend/NOTE-MANAGEMENT-USAGE.md
+frontend/NOTE-QUICK-START.md
+frontend/PAPER-FORM-COMPLETE.md
+frontend/PAPER-FORM-USAGE.md
+frontend/PDF-QUICK-START.md
+frontend/PDF-UPLOAD-COMPLETE.md
+frontend/PDF-UPLOAD-USAGE.md
+frontend/SEARCH-FILTERS-COMPLETE.md
+frontend/SETUP-COMPLETE.md
+frontend/TAG-MANAGEMENT-COMPLETE.md
+
+# Backend documentation
+backend/CODE-FIRST-DB.md
+backend/COMPLETION-CHECKLIST.md
+backend/DATABASE-RESET.md
+backend/IMPLEMENTATION-GUIDE.md
+backend/PROGRESS.md
+backend/RESET-DB-GUIDE.md
+backend/SETUP.md
+backend/TESTING-GUIDE.md
+
+# Database documentation
+database/README.md
+database/WHY-SEPARATE-AI-SUMMARIES-TABLE.md
+
+# Test scripts
+test-doi-autofill.ps1
+test-doi-browser.js
