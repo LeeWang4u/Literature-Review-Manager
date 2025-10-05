@@ -37,6 +37,7 @@ import {
   Delete,
   Edit,
   FilterList,
+  ArrowBack,
 } from '@mui/icons-material';
 import { libraryService } from '@/services/library.service';
 import { ReadingStatus, LibraryItem } from '@/types';
@@ -256,7 +257,21 @@ const LibraryPage: React.FC = () => {
   return (
     <Container maxWidth="lg">
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-          <Typography variant="h4">My Library</Typography>
+          <Box display="flex" alignItems="center" gap={2}>
+            <IconButton
+              onClick={() => navigate('/papers')}
+              color="primary"
+              sx={{
+                '&:hover': {
+                  backgroundColor: 'primary.light',
+                  opacity: 0.9,
+                },
+              }}
+            >
+              <ArrowBack />
+            </IconButton>
+            <Typography variant="h4">My Library</Typography>
+          </Box>
           {stats && (
             <Box>
               <Typography variant="body2" color="textSecondary">
