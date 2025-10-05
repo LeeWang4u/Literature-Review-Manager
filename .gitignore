@@ -65,6 +65,9 @@ backend/uploads/
 temp/
 tmp/
 
+# Internal documentation folder (not for Git)
+docs-internal/
+
 # Documentation files (exclude from Git)
 # Keep only main README.md
 AUTHENTICATION-FIX-SUMMARY.md
