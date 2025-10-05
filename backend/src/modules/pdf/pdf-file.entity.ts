@@ -1,0 +1,58 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  Index,
+} from 'typeorm';
+import { User } from '../users/user.entity';
+import { Paper } from '../papers/paper.entity';
+
+@Entity('pdf_files')
+export class PdfFile {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ name: 'paper_id' })
+  @Index()
+  paperId: number;
+
+  @Column({ name: 'file_name', length: 255 })
+  fileName: string;
+
+  @Column({ name: 'file_path', length: 500 })
+  filePath: string;
+
+  @Column({ name: 'file_size', type: 'bigint', nullable: true })
+  fileSize: number;
+
+  @Column({ name: 'original_filename', length: 255 })
+  originalFilename: string;
+
+  @Column({ name: 'mime_type', length: 100, nullable: true })
+  mimeType: string;
+
+  @Column({ type: 'int', default: 1 })
+  version: number;
+
+  @Column({ name: 'uploaded_by' })
+  uploadedById: number;
+
+  // Alias for compatibility with services
+  get userId(): number {
+    return this.uploadedById;
+  }
+
+  @CreateDateColumn({ name: 'uploaded_at' })
+  uploadedAt: Date;
+
+  @ManyToOne(() => Paper, (paper) => paper.pdfFiles)
+  @JoinColumn({ name: 'paper_id' })
+  paper: Paper;
+
+  @ManyToOne(() => User, (user) => user.uploadedFiles)
+  @JoinColumn({ name: 'uploaded_by' })
+  uploadedBy: User;
+}
