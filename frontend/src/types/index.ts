@@ -46,6 +46,8 @@ export interface Paper {
   userId: number;
   createdAt: string;
   updatedAt: string;
+  status: 'to_read' | 'reading' | 'completed';
+  favorite: boolean;
 }
 
 export interface CreatePaperData {

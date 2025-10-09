@@ -75,6 +75,16 @@ export class Paper {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
+  @Column({
+    type: 'enum',
+    enum: ['to_read', 'reading', 'completed'],
+    default: 'to_read',
+  })
+  status: 'to_read' | 'reading' | 'completed';
+
+  @Column({ type: 'boolean', default: false })
+  favorite: boolean;
+
   // Relations
   @ManyToOne(() => User, (user) => user.papers)
   @JoinColumn({ name: 'added_by' })

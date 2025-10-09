@@ -19,6 +19,7 @@ import { SearchPaperDto } from './dto/search-paper.dto';
 import { ExtractMetadataDto } from './dto/extract-metadata.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaperMetadataService } from './paper-metadata.service';
+import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 
 @ApiTags('Papers')
 @Controller('papers')
@@ -28,15 +29,15 @@ export class PapersController {
   constructor(
     private papersService: PapersService,
     private paperMetadataService: PaperMetadataService,
-  ) {}
+  ) { }
 
   @Post('extract-metadata')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Extract paper metadata from DOI or URL',
     description: 'Automatically fetch paper information from DOI or URL (Crossref, Semantic Scholar, ArXiv)',
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'Metadata extracted successfully',
     schema: {
       example: {
@@ -54,10 +55,10 @@ export class PapersController {
   @ApiResponse({ status: 404, description: 'Paper metadata not found' })
   async extractMetadata(@Body() dto: ExtractMetadataDto) {
     const metadata = await this.paperMetadataService.extractMetadata(dto.input);
-    
+
     // Check if it's an ArXiv paper and add PDF availability info
     const arxivId = this.paperMetadataService.extractArxivId(dto.input);
-    
+
     return {
       ...metadata,
       arxivId,
@@ -67,12 +68,12 @@ export class PapersController {
   }
 
   @Post('download-arxiv-pdf')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Download PDF from ArXiv',
     description: 'Download PDF file from ArXiv for a given ArXiv ID or URL',
   })
-  @ApiResponse({ 
-    status: 200, 
+  @ApiResponse({
+    status: 200,
     description: 'PDF downloaded successfully',
     content: {
       'application/pdf': {
@@ -87,13 +88,13 @@ export class PapersController {
   @ApiResponse({ status: 500, description: 'Failed to download PDF' })
   async downloadArxivPdf(@Body() dto: ExtractMetadataDto) {
     const arxivId = this.paperMetadataService.extractArxivId(dto.input);
-    
+
     if (!arxivId) {
       throw new Error('Invalid ArXiv ID or URL');
     }
-    
+
     const pdfBuffer = await this.paperMetadataService.downloadArxivPdf(arxivId);
-    
+
     return {
       arxivId,
       filename: `${arxivId}.pdf`,
@@ -153,4 +154,18 @@ export class PapersController {
     await this.papersService.remove(id, req.user.id);
     return { message: 'Paper deleted successfully' };
   }
+
+  @Put(':id/status')
+  @ApiOperation({ summary: 'Update paper status or favorite flag' })
+  @ApiResponse({ status: 200, description: 'Status or favorite updated successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - not owner' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  async updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePaperStatusDto,
+    @Request() req,
+  ) {
+    return await this.papersService.updateStatus(id, dto, req.user.id);
+  }
+
 }

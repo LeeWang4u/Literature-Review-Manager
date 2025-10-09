@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -14,7 +14,13 @@ import {
   IconButton,
   Tooltip,
   Collapse,
+  FormControl,
+  Select,
+  MenuItem,
 } from '@mui/material';
+// import IconButton from '@mui/material/IconButton';
+import StarIcon from '@mui/icons-material/Star';
+import StarBorderIcon from '@mui/icons-material/StarBorder';
 import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, LibraryAdd } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
@@ -35,11 +41,44 @@ const PaperDetailPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [showUploader, setShowUploader] = useState(false);
 
+  // const [favorite, setFavorite] = useState(false);
+
+
+
   const { data: paper, isLoading, error } = useQuery({
     queryKey: ['paper', id],
     queryFn: () => paperService.getById(Number(id)),
     enabled: !!id,
   });
+
+  const [status, setStatus] = useState('to_read');
+  const [favorite, setFavorite] = useState(false);
+
+  useEffect(() => {
+    if (paper) {
+      setStatus(paper.status || 'to_read');
+      setFavorite(paper.favorite || false);
+    }
+  }, [paper]);
+
+  // const handleStatusChange = async (newStatus: 'to_read' | 'reading' | 'completed') => {
+  //   setStatus(newStatus);
+  //   await paperService.updateStatus(paper.id, { status: newStatus });
+  // };
+
+  // const handleToggleFavorite = async () => {
+  //   const newFavorite = !favorite;
+  //   setFavorite(newFavorite);
+  //   await paperService.updateFavorite(paper.id, { favorite: newFavorite });
+  // };
+
+  // if (isLoading) return <div>Loading...</div>;
+  // if (!paper) return <div>Not found</div>;
+
+
+
+  // const [status, setStatus] = useState(paper.status || 'to_read');
+  // const [favorite, setFavorite] = useState(paper.favorite || false);
 
   // Fetch PDFs for this paper
   const { data: pdfFiles = [], isLoading: pdfsLoading } = useQuery({
@@ -60,14 +99,14 @@ const PaperDetailPage: React.FC = () => {
     queryKey: ['library'],
     queryFn: () => libraryService.getLibrary(),
   });
-  
+
   const isInLibrary = library.some(item => item.paperId === Number(id));
 
   // Add to library mutation
   const addToLibraryMutation = useMutation({
-    mutationFn: () => libraryService.addToLibrary({ 
-      paperId: Number(id), 
-      status: ReadingStatus.TO_READ 
+    mutationFn: () => libraryService.addToLibrary({
+      paperId: Number(id),
+      status: ReadingStatus.TO_READ
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['library'] });
@@ -91,6 +130,69 @@ const PaperDetailPage: React.FC = () => {
       toast.error(error.response?.data?.message || 'Failed to delete paper');
     },
   });
+
+  if (isLoading) {
+    return (
+      <MainLayout>
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+          <CircularProgress />
+        </Box>
+      </MainLayout>
+    );
+  }
+
+  if (error || !paper) {
+    return (
+      <MainLayout>
+        <Container maxWidth="md">
+          <Alert severity="error">Failed to load paper details</Alert>
+        </Container>
+      </MainLayout>
+    );
+  }
+
+  // const handleStatusChange = async (newStatus: 'to_read' | 'reading' | 'completed') => {
+  //   await paperService.updateStatusAndFavorite(paper.id, { status: newStatus });
+
+  //   setStatus(newStatus);
+  // };
+
+  // const handleToggleFavorite = async () => {
+  //   const newFav = !favorite;
+  //   await paperService.updateStatusAndFavorite(paper.id, { favorite: newFav });
+
+  //   setFavorite(newFav);
+  // };
+
+  const handleStatusChange = async (newStatus: 'to_read' | 'reading' | 'completed') => {
+    // Cập nhật UI ngay lập tức
+    setStatus(newStatus);
+    queryClient.setQueryData(['paper', id], (old: any) =>
+      old ? { ...old, status: newStatus } : old
+    );
+
+    try {
+      await paperService.updateStatusAndFavorite(paper.id, { status: newStatus });
+    } catch {
+      toast.error('Update failed');
+    }
+  };
+
+
+  const handleToggleFavorite = async () => {
+    const newFav = !favorite;
+    setFavorite(newFav);
+    queryClient.setQueryData(['paper', id], (old: any) =>
+      old ? { ...old, favorite: newFav } : old
+    );
+
+    try {
+      await paperService.updateStatusAndFavorite(paper.id, { favorite: newFav });
+    } catch {
+      toast.error('Update failed');
+    }
+  };
+
 
   const handleAddToLibrary = () => {
     addToLibraryMutation.mutate();
@@ -146,10 +248,10 @@ const PaperDetailPage: React.FC = () => {
                 </Tooltip>
               )}
               {isInLibrary && (
-                <Chip 
-                  label="In Library" 
-                  color="success" 
-                  sx={{ mr: 1, height: 36 }} 
+                <Chip
+                  label="In Library"
+                  color="success"
+                  sx={{ mr: 1, height: 36 }}
                 />
               )}
               <Tooltip title="Edit Paper">
@@ -173,9 +275,57 @@ const PaperDetailPage: React.FC = () => {
             </Box>
           </Box>
 
-          <Typography variant="subtitle1" color="textSecondary" gutterBottom>
-            {paper.authors}
-          </Typography>
+          <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+            <Typography variant="subtitle1" color="textSecondary" gutterBottom>
+              {paper.authors}
+            </Typography>
+
+            <Box display="flex" gap={1}>
+              {isInLibrary && (
+                <Box display="flex" alignItems="center" gap={1}>
+                  {/* Dropdown chọn trạng thái */}
+                  <FormControl size="small" variant="outlined">
+                    <Select
+                      value={status}
+                      onChange={(e) => handleStatusChange(e.target.value as 'to_read' | 'reading' | 'completed')}
+                      sx={{
+                        height: 36,
+                        fontSize: 14,
+                        bgcolor: "background.paper",
+                        "& .MuiOutlinedInput-notchedOutline": {
+                          borderColor: "divider",
+                        },
+                      }}
+                    >
+                      <MenuItem value="to_read">📘 To Read</MenuItem>
+                      <MenuItem value="reading">📖 Reading</MenuItem>
+                      <MenuItem value="finished">✅ Completed</MenuItem>
+                    </Select>
+                  </FormControl>
+
+                  {/* Icon yêu thích */}
+                  <IconButton onClick={handleToggleFavorite}>
+                    {favorite ? (
+                      <StarIcon color="warning" /> // Vàng khi đã chọn
+                    ) : (
+                      <StarBorderIcon color="action" /> // Xám khi chưa chọn
+                    )}
+                  </IconButton>
+                </Box>
+              )
+
+                // <IconButton onClick={() => setFavorite(!favorite)}>
+                //   {favorite ? (
+                //     <StarIcon color="warning" />   // vàng khi đã chọn
+                //   ) : (
+                //     <StarBorderIcon color="action" />  // xám khi chưa chọn
+                //   )}
+                // </IconButton>)
+              }
+            </Box>
+
+          </Box>
+
 
           <Box mt={2} mb={2}>
             <Typography variant="body2">
@@ -281,7 +431,7 @@ const PaperDetailPage: React.FC = () => {
                 )}
               </Typography>
             </Box>
-            
+
             <Button
               variant="outlined"
               fullWidth
