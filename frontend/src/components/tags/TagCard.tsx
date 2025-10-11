@@ -17,9 +17,10 @@ interface TagCardProps {
   paperCount?: number;
   onEdit: (tag: Tag) => void;
   onDelete: (id: number) => void;
+  onClickTag?: (tag: Tag) => void; 
 }
 
-export const TagCard: React.FC<TagCardProps> = ({ tag, paperCount = 0, onEdit, onDelete }) => {
+export const TagCard: React.FC<TagCardProps> = ({ tag, paperCount = 0, onEdit, onDelete, onClickTag }) => {
   const formatDate = (dateString: string): string => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -36,6 +37,7 @@ export const TagCard: React.FC<TagCardProps> = ({ tag, paperCount = 0, onEdit, o
 
   return (
     <Card 
+      onClick={() => onClickTag && onClickTag(tag)}
       variant="outlined" 
       sx={{ 
         height: '100%', 

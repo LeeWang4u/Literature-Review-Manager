@@ -67,7 +67,7 @@ export interface SearchPaperParams {
   year?: number;
   author?: string;
   journal?: string;
-  tags?: string[];
+  tags?: string;
   page?: number;
   pageSize?: number;
   sortBy?: 'title' | 'year' | 'authors' | 'createdAt';

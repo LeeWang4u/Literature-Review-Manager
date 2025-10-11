@@ -17,6 +17,7 @@ import TagsPage from '@/pages/tags/TagsPage';
 import LibraryPage from '@/pages/library/LibraryPage';
 import CitationNetworkPage from '@/pages/citations/CitationNetworkPage';
 import ProfilePage from '@/pages/profile/ProfilePage';
+import TagPaperPage from '@/pages/tags/TagPapersPage';
 
 // Create MUI theme
 const theme = createTheme({
@@ -110,6 +111,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <TagsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route 
+                path="/tags/:id"
+                element={
+                  <ProtectedRoute>
+                    <TagPaperPage />
                   </ProtectedRoute>
                 }
               />

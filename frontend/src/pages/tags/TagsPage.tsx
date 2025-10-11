@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   Container,
   Typography,
@@ -24,6 +25,7 @@ import toast from 'react-hot-toast';
 
 const TagsPage: React.FC = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,6 +86,10 @@ const TagsPage: React.FC = () => {
       toast.error(error.response?.data?.message || 'Failed to delete tag');
     },
   });
+
+  const HandleClickTag = (tag: Tag) => {
+    navigate(`/tags/${tag.id}`);
+  };
 
   const handleOpenDialog = () => {
     setEditingTag(null);
@@ -256,11 +262,14 @@ const TagsPage: React.FC = () => {
           <Grid container spacing={3}>
             {filteredTags.map((tag) => (
               <Grid item xs={12} sm={6} md={4} key={tag.id}>
+
                 <TagCard
                   tag={tag}
                   paperCount={getTagPaperCount(tag.id)}
                   onEdit={handleEditTag}
                   onDelete={handleDeleteTag}
+                  onClickTag={HandleClickTag}
+
                 />
               </Grid>
             ))}
