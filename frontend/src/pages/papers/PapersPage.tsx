@@ -104,7 +104,7 @@ const PapersPage: React.FC = () => {
     }
 
     if (selectedTags.length > 0) {
-      params.tags = selectedTags.map(tag => tag.name);
+      params.tags = selectedTags.map(tag => tag.id).join(',');
     }
 
     setSearchParams(params);

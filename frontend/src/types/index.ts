@@ -46,6 +46,8 @@ export interface Paper {
   userId: number;
   createdAt: string;
   updatedAt: string;
+  status: 'to_read' | 'reading' | 'completed';
+  favorite: boolean;
 }
 
 export interface CreatePaperData {
@@ -65,7 +67,7 @@ export interface SearchPaperParams {
   year?: number;
   author?: string;
   journal?: string;
-  tags?: string[];
+  tags?: string;
   page?: number;
   pageSize?: number;
   sortBy?: 'title' | 'year' | 'authors' | 'createdAt';
@@ -119,7 +121,6 @@ export interface Note {
 }
 
 export interface CreateNoteData {
-  title: string;
   content: string;
   paperId: number;
   highlightedText?: string;

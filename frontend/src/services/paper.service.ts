@@ -1,3 +1,4 @@
+import { uptime } from 'process';
 import axiosInstance from './api';
 import {
   Paper,
@@ -48,4 +49,42 @@ export const paperService = {
     const response = await axiosInstance.post('/papers/download-arxiv-pdf', { input });
     return response.data;
   },
+
+  updateStatus: async (id: number, status: 'to_read' | 'reading' | 'completed'): Promise<Paper> => {
+    const response = await axiosInstance.patch<Paper>(`/papers/${id}/status`, { status });
+    return response.data;
+  },
+
+  updateFavorite: async (id: number, favorite: boolean): Promise<Paper> => {
+    const response = await axiosInstance.patch<Paper>(`/papers/${id}/favorite`, { favorite });
+    return response.data;
+  },
+
+  updateStatusAndFavorite: async (
+    id: number,
+    data: { status?: 'to_read' | 'reading' | 'completed'; favorite?: boolean }
+  ): Promise<Paper> => {
+    const response = await axiosInstance.put<Paper>(`/papers/${id}/status`, data);
+    return response.data;
+  },
+
+
+  //   updatePaperStatusFavorite: async (
+  //   paperId: number,
+  //   data: { status?: 'to_read' | 'reading' | 'completed'; favorite?: boolean }
+  // ) => {
+  //   const res = await axios.put(`/api/papers/${paperId}/status`, data);
+  //   return res.data;
+  // },
+
+
+  //   updatePaperStatus = async (
+  //   paperId: number,
+  //   data: { status?: 'to_read' | 'reading' | 'completed'; favorite?: boolean }
+  // ) => {
+  //   const res = await axios.put(`/api/papers/${paperId}/status`, data);
+  //   return res.data;
+  // };
 };
+
+

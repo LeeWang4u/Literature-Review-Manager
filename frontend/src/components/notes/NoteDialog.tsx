@@ -17,13 +17,19 @@ import { Note } from '@/types';
 interface NoteDialogProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: NoteFormData) => void;
+  onSubmit: (data: NoteFormDataSubmit) => void;
   existingNote?: Note | null;
   isLoading?: boolean;
 }
 
 export interface NoteFormData {
   title: string;
+  content: string;
+  highlightedText?: string;
+  pageNumber?: number;
+}
+
+export interface NoteFormDataSubmit {
   content: string;
   highlightedText?: string;
   pageNumber?: number;
@@ -70,7 +76,13 @@ export const NoteDialog: React.FC<NoteDialogProps> = ({
   }, [open, existingNote, reset]);
 
   const handleFormSubmit = (data: NoteFormData) => {
-    onSubmit(data);
+    const noteData: NoteFormDataSubmit = {
+      content: `${data.title}\n${data.content}`,
+      highlightedText: data.highlightedText,
+      pageNumber: data.pageNumber,
+    };
+
+    onSubmit(noteData);
   };
 
   const handleClose = () => {

@@ -5,13 +5,14 @@ import { Paper } from './paper.entity';
 import { CreatePaperDto } from './dto/create-paper.dto';
 import { UpdatePaperDto } from './dto/update-paper.dto';
 import { SearchPaperDto } from './dto/search-paper.dto';
+import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 
 @Injectable()
 export class PapersService {
   constructor(
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
-  ) {}
+  ) { }
 
   async create(createPaperDto: CreatePaperDto, userId: number): Promise<Paper> {
     const { tagIds, ...paperData } = createPaperDto;
@@ -161,4 +162,22 @@ export class PapersService {
       byYear,
     };
   }
+
+  async updateStatus(id: number, dto: UpdatePaperStatusDto, userId: number) {
+    const paper = await this.papersRepository.findOne({ where: { id } });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    if (paper.addedBy !== userId) {
+      throw new ForbiddenException('You are not the owner of this paper');
+    }
+
+    if (dto.status !== undefined) paper.status = dto.status;
+    if (dto.favorite !== undefined) paper.favorite = dto.favorite;
+
+    return await this.papersRepository.save(paper);
+  }
+
 }
