@@ -121,7 +121,6 @@ export interface Note {
 }
 
 export interface CreateNoteData {
-  title: string;
   content: string;
   paperId: number;
   highlightedText?: string;
