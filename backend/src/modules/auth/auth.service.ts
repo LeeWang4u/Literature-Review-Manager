@@ -1,9 +1,10 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/reset-password.dto';
 import { User } from '../users/user.entity';
 
 export interface AuthResponse {
@@ -45,13 +46,15 @@ export class AuthService {
     const user = await this.usersService.findByEmail(email);
 
     if (!user) {
+      // Email không tồn tại - trả về null (sẽ hiển thị "Invalid credentials")
       return null;
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      return null;
+      // Password sai - throw specific error
+      throw new UnauthorizedException('Wrong password');
     }
 
     if (!user.isActive) {
@@ -74,5 +77,32 @@ export class AuthService {
         avatarUrl: user.avatarUrl,
       },
     };
+  }
+
+  // Change password (for logged-in users)
+  async changePassword(userId: number, changePasswordDto: ChangePasswordDto): Promise<{ message: string }> {
+    const user = await this.usersService.findById(userId);
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(changePasswordDto.currentPassword, user.password);
+
+    if (!isPasswordValid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    // Don't allow same password
+    const isSamePassword = await bcrypt.compare(changePasswordDto.newPassword, user.password);
+    if (isSamePassword) {
+      throw new BadRequestException('New password must be different from current password');
+    }
+
+    // Update to new password
+    await this.usersService.changePassword(userId, changePasswordDto.newPassword);
+
+    return { message: 'Password changed successfully' };
   }
 }

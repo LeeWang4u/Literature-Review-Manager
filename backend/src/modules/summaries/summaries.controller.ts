@@ -22,9 +22,13 @@ export class SummariesController {
   constructor(private readonly summariesService: SummariesService) {}
 
   @Post('generate/:paperId')
-  @ApiOperation({ summary: 'Generate AI summary for a paper' })
+  @ApiOperation({ 
+    summary: 'Generate AI summary for a paper',
+    description: 'Generate summary using Gemini AI. Supports provider selection (gemini).'
+  })
   @ApiResponse({ status: 201, description: 'Summary generated successfully' })
   @ApiResponse({ status: 404, description: 'Paper not found' })
+  @ApiResponse({ status: 400, description: 'Invalid request or API not configured' })
   generateSummary(
     @Param('paperId', ParseIntPipe) paperId: number,
     @Req() req,
@@ -34,6 +38,7 @@ export class SummariesController {
       paperId,
       req.user.id,
       generateSummaryDto.forceRegenerate || false,
+      generateSummaryDto.provider || 'gemini',
     );
   }
 
@@ -51,5 +56,26 @@ export class SummariesController {
   @ApiResponse({ status: 404, description: 'Summary not found' })
   deleteSummary(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
     return this.summariesService.deleteSummary(paperId, req.user.id);
+  }
+
+  @Post('suggest-tags/:paperId')
+  @ApiOperation({ 
+    summary: 'Suggest tags for a paper using AI',
+    description: 'Generate relevant tag suggestions based on paper title, abstract, and keywords using Gemini AI.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Tag suggestions generated successfully',
+    schema: {
+      example: {
+        suggested: ['Machine Learning', 'Computer Vision', 'Deep Learning'],
+        confidence: 0.92
+      }
+    }
+  })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  suggestTags(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
+    return this.summariesService.suggestTags(paperId, req.user.id);
   }
 }

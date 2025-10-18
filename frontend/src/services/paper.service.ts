@@ -1,4 +1,3 @@
-import { uptime } from 'process';
 import axiosInstance from './api';
 import {
   Paper,

@@ -180,4 +180,12 @@ export class PapersService {
     return await this.papersRepository.save(paper);
   }
 
+  /**
+   * Update fullText field for a paper
+   * Used after PDF text extraction
+   */
+  async updateFullText(id: number, fullText: string): Promise<void> {
+    await this.papersRepository.update(id, { fullText });
+  }
+
 }

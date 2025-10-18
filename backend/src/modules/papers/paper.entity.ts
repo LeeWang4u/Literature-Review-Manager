@@ -36,6 +36,9 @@ export class Paper {
   @Column({ type: 'text', nullable: true })
   abstract: string;
 
+  @Column({ type: 'longtext', nullable: true })
+  fullText: string;
+
   @Column({ name: 'publication_year', nullable: true })
   publicationYear: number;
 

@@ -8,6 +8,7 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 // Pages
 import LoginPage from '@/pages/auth/LoginPage';
 import RegisterPage from '@/pages/auth/RegisterPage';
+import ChangePasswordPage from '@/pages/auth/ChangePasswordPage';
 import DashboardPage from '@/pages/dashboard/DashboardPage';
 import PapersPage from '@/pages/papers/PapersPage';
 import PaperDetailPage from '@/pages/papers/PaperDetailPage';
@@ -18,6 +19,7 @@ import LibraryPage from '@/pages/library/LibraryPage';
 import CitationNetworkPage from '@/pages/citations/CitationNetworkPage';
 import ProfilePage from '@/pages/profile/ProfilePage';
 import TagPaperPage from '@/pages/tags/TagPapersPage';
+import ChatTestPage from '@/pages/ChatTestPage';
 
 // Create MUI theme
 const theme = createTheme({
@@ -58,6 +60,14 @@ function App() {
               <Route path="/register" element={<RegisterPage />} />
 
               {/* Protected routes */}
+              <Route
+                path="/change-password"
+                element={
+                  <ProtectedRoute>
+                    <ChangePasswordPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="/dashboard"
                 element={
@@ -143,6 +153,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ProfilePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/chat-test"
+                element={
+                  <ProtectedRoute>
+                    <ChatTestPage />
                   </ProtectedRoute>
                 }
               />

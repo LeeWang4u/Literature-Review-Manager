@@ -34,6 +34,7 @@ import toast from 'react-hot-toast';
 import { PdfUploader } from '@/components/pdf/PdfUploader';
 import { PdfViewer } from '@/components/pdf/PdfViewer';
 import { AiSummaryCard } from '@/components/summary/AiSummaryCard';
+import { ChatBox } from '@/components/chat/ChatBox';
 
 const PaperDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -459,6 +460,13 @@ const PaperDetailPage: React.FC = () => {
             </Button>
           </Box>
         </Paper>
+
+        {/* AI Chat Assistant */}
+        <ChatBox
+          paperId={paper.id}
+          paperTitle={paper.title}
+          paperContext={paper.abstract}
+        />
       </Container>
     </MainLayout>
   );

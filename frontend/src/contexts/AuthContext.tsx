@@ -37,16 +37,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (authService.isAuthenticated()) {
           const currentUser = authService.getCurrentUser();
           if (currentUser) {
+            // User data exists in localStorage, use it immediately
             setUser(currentUser);
           } else {
             // Token exists but no user data - fetch from API
-            const profile = await authService.getProfile();
-            setUser(profile);
+            try {
+              const profile = await authService.getProfile();
+              setUser(profile);
+              // Update localStorage with fresh user data
+              localStorage.setItem('user', JSON.stringify(profile));
+            } catch (fetchError) {
+              // If profile fetch fails, just log it but don't logout
+              // The token might still be valid, let the user try to use the app
+              console.warn('Failed to fetch user profile on mount:', fetchError);
+              // Don't call logout here - let API interceptor handle 401s
+            }
           }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
-        authService.logout();
+        // Don't logout here - only clear state
+        setUser(null);
       } finally {
         setIsLoading(false);
       }
@@ -56,8 +67,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const login = async (email: string, password: string) => {
+    console.log('🔐 AuthContext: Starting login...');
     const response = await authService.login({ email, password });
+    console.log('✅ AuthContext: Login API successful, user:', response.user);
     setUser(response.user);
+    console.log('✅ AuthContext: User state updated');
   };
 
   const register = async (data: { email: string; password: string; fullName: string; affiliation?: string }) => {

@@ -31,6 +31,16 @@ export class PaperMetadataService {
     const type = this.detectInputType(input);
     
     switch (type) {
+      case 'arxiv':
+        // Extract ArXiv ID from DOI format: 10.48550/arXiv.2303.17580 -> 2303.17580
+        const arxivId = this.extractArxivId(input);
+        if (arxivId) {
+          return this.fetchFromArXiv(arxivId);
+        }
+        throw new HttpException(
+          'Invalid ArXiv DOI format',
+          HttpStatus.BAD_REQUEST,
+        );
       case 'doi':
         return this.fetchFromDOI(input);
       case 'url':
@@ -46,7 +56,13 @@ export class PaperMetadataService {
   /**
    * Detect if input is DOI or URL
    */
-  private detectInputType(input: string): 'doi' | 'url' | 'unknown' {
+  private detectInputType(input: string): 'doi' | 'url' | 'arxiv' | 'unknown' {
+    // Check for ArXiv DOI format: 10.48550/arXiv.XXXX
+    const arxivDoiPattern = /^10\.48550\/arXiv\.\d+\.\d+$/i;
+    if (arxivDoiPattern.test(input)) {
+      return 'arxiv';
+    }
+    
     // DOI patterns
     const doiPattern = /^10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+$/;
     const doiUrlPattern = /doi\.org\/(10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+)/i;
@@ -122,16 +138,15 @@ export class PaperMetadataService {
       
       return metadata;
     } catch (error) {
-      this.logger.warn(`Crossref failed for DOI ${doi}, trying Semantic Scholar as fallback...`);
+      this.logger.warn(`Crossref failed for DOI ${doi} (Status: ${error.response?.status}), trying Semantic Scholar as fallback...`);
       
       // Fallback to Semantic Scholar for all metadata
       try {
         return await this.fetchFromSemanticScholar(doi);
       } catch (fallbackError) {
-        throw new HttpException(
-          'Unable to fetch paper metadata from any source. Please enter details manually.',
-          HttpStatus.NOT_FOUND,
-        );
+        // Provide helpful error message
+        const errorMsg = this.getHelpfulErrorMessage(doi, error.response?.status);
+        throw new HttpException(errorMsg, HttpStatus.NOT_FOUND);
       }
     }
   }
@@ -217,7 +232,8 @@ export class PaperMetadataService {
       
       return this.mapSemanticScholarToMetadata(data);
     } catch (error) {
-      this.logger.error(`Semantic Scholar failed: ${error.message}`);
+      // Use debug level instead of error since this is often expected (404 for papers not in S2 database)
+      this.logger.debug(`Semantic Scholar lookup failed (not in database): ${error.message}`);
       throw new HttpException(
         'Unable to fetch paper metadata. Please enter details manually.',
         HttpStatus.NOT_FOUND,
@@ -355,6 +371,12 @@ export class PaperMetadataService {
    * Extract ArXiv ID from URL or DOI
    */
   extractArxivId(input: string): string | null {
+    // Match new ArXiv DOI format: 10.48550/arXiv.2303.17580
+    const newDoiMatch = input.match(/10\.48550\/arXiv\.(\d+\.\d+)/i);
+    if (newDoiMatch) {
+      return newDoiMatch[1];
+    }
+
     // Match ArXiv URLs: https://arxiv.org/abs/2103.15348
     const urlMatch = input.match(/arxiv\.org\/abs\/(\d+\.\d+)/i);
     if (urlMatch) {
@@ -402,5 +424,30 @@ export class PaperMetadataService {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  /**
+   * Get helpful error message for DOI lookup failures
+   */
+  private getHelpfulErrorMessage(doi: string, statusCode?: number): string {
+    // Check DOI prefix to identify publisher
+    const doiPrefix = doi.split('/')[0];
+    
+    // Common small publishers or journals not in Crossref/Semantic Scholar
+    const smallPublishers: Record<string, string> = {
+      '10.38124': 'IJISRT (International Journal of Innovative Science and Research Technology)',
+      '10.xxxxx': 'Other small publisher',
+    };
+
+    const publisherName = smallPublishers[doiPrefix];
+
+    if (statusCode === 404) {
+      if (publisherName) {
+        return `This paper from ${publisherName} is not available in Crossref or Semantic Scholar databases. Please enter the paper details manually, or visit the publisher website: https://doi.org/${doi}`;
+      }
+      return `DOI ${doi} not found in Crossref or Semantic Scholar databases. This may be from a smaller publisher not indexed in these services. Please enter details manually or visit: https://doi.org/${doi}`;
+    }
+
+    return 'Unable to fetch paper metadata. Please enter details manually or try again later.';
   }
 }

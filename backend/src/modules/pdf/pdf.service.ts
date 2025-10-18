@@ -1,18 +1,24 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PdfFile } from './pdf-file.entity';
 import { Paper } from '../papers/paper.entity';
+import { PdfTextExtractorService } from './pdf-text-extractor.service';
+import { PapersService } from '../papers/papers.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
 @Injectable()
 export class PdfService {
+  private readonly logger = new Logger(PdfService.name);
+
   constructor(
     @InjectRepository(PdfFile)
     private pdfRepository: Repository<PdfFile>,
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
+    private pdfTextExtractor: PdfTextExtractorService,
+    private papersService: PapersService,
   ) {}
 
   async uploadPdf(
@@ -54,7 +60,20 @@ export class PdfService {
       version,
     });
 
-    return await this.pdfRepository.save(pdfFile);
+    const savedPdfFile = await this.pdfRepository.save(pdfFile);
+
+    // 🔥 Extract text from PDF asynchronously (don't block upload on extraction failure)
+    try {
+      this.logger.log(`📄 Starting PDF text extraction for paper ${paperId}`);
+      const extractedText = await this.pdfTextExtractor.extractText(file.path);
+      await this.papersService.updateFullText(paperId, extractedText);
+      this.logger.log(`✅ PDF text extracted and saved for paper ${paperId} (${extractedText.length} characters)`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to extract PDF text for paper ${paperId}: ${error.message}`);
+      // Don't fail the upload if extraction fails - the PDF is still uploaded successfully
+    }
+
+    return savedPdfFile;
   }
 
   async findByPaper(paperId: number, userId: number): Promise<PdfFile[]> {

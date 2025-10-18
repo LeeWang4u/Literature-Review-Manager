@@ -6,12 +6,16 @@ import {
   Paper,
   Avatar,
   CircularProgress,
+  Button,
 } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import LockIcon from '@mui/icons-material/Lock';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/contexts/AuthContext';
 
 const ProfilePage: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   if (!user) {
     return (
@@ -51,9 +55,18 @@ const ProfilePage: React.FC = () => {
           </Box>
 
           <Box>
-            <Typography variant="h6" gutterBottom>
-              Account Information
-            </Typography>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Typography variant="h6">
+                Account Information
+              </Typography>
+              <Button
+                variant="outlined"
+                startIcon={<LockIcon />}
+                onClick={() => navigate('/change-password')}
+              >
+                Change Password
+              </Button>
+            </Box>
 
             <Box mt={2}>
               <Typography variant="body1">
