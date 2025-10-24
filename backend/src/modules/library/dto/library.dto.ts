@@ -8,10 +8,7 @@ export class AddToLibraryDto {
   @IsInt()
   paperId: number;
 
-  @ApiProperty({ enum: LibraryStatus, example: 'to-read' })
-  @IsOptional()
-  @IsEnum(LibraryStatus)
-  status?: LibraryStatus;
+
 }
 
 export class UpdateLibraryStatusDto {

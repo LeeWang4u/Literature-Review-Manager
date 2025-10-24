@@ -27,7 +27,7 @@ import { paperService } from '@/services/paper.service';
 import { pdfService } from '@/services/pdf.service';
 import { noteService } from '@/services/note.service';
 import { libraryService } from '@/services/library.service';
-import { ReadingStatus } from '@/types';
+// import { ReadingStatus } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -106,7 +106,7 @@ const PaperDetailPage: React.FC = () => {
   const addToLibraryMutation = useMutation({
     mutationFn: () => libraryService.addToLibrary({
       paperId: Number(id),
-      status: ReadingStatus.TO_READ
+      // status: ReadingStatus.TO_READ
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['library'] });
@@ -173,6 +173,9 @@ const PaperDetailPage: React.FC = () => {
 
     try {
       await paperService.updateStatusAndFavorite(paper.id, { status: newStatus });
+      
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+      queryClient.invalidateQueries({ queryKey: ['library-statistics'] });
     } catch {
       toast.error('Update failed');
     }
@@ -188,6 +191,8 @@ const PaperDetailPage: React.FC = () => {
 
     try {
       await paperService.updateStatusAndFavorite(paper.id, { favorite: newFav });
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+      queryClient.invalidateQueries({ queryKey: ['library-statistics'] });
     } catch {
       toast.error('Update failed');
     }
@@ -299,7 +304,7 @@ const PaperDetailPage: React.FC = () => {
                     >
                       <MenuItem value="to_read">📘 To Read</MenuItem>
                       <MenuItem value="reading">📖 Reading</MenuItem>
-                      <MenuItem value="finished">✅ Completed</MenuItem>
+                      <MenuItem value="completed">✅ Completed</MenuItem>
                     </Select>
                   </FormControl>
 

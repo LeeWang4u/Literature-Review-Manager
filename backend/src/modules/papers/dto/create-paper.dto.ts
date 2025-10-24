@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { ReferenceDto } from './reference.dto';
 
 export class CreatePaperDto {
   @ApiProperty({ example: 'Attention Is All You Need' })
@@ -21,7 +22,8 @@ export class CreatePaperDto {
 
   @ApiProperty({ example: 'Vaswani, A., Shazeer, N., Parmar, N.' })
   @IsString()
-  @IsNotEmpty()
+  // @IsNotEmpty()
+  @IsOptional()
   authors: string;
 
   @ApiProperty({ example: 'The dominant sequence transduction models...', required: false })
@@ -84,4 +86,17 @@ export class CreatePaperDto {
   @IsInt({ each: true })
   @Type(() => Number)
   tagIds?: number[];
+
+  @ApiProperty({
+    type: () => ReferenceDto,  // Sử dụng lazy resolver và class riêng
+    isArray: true,
+    required: false,
+    example: [
+      { title: 'Neural Machine Translation by Jointly Learning to Align and Translate', doi: '10.5555/3295222.3295349' },
+    ],
+  })
+  @IsArray()
+  @IsOptional()
+  @Type(() => ReferenceDto)  // Sử dụng class-transformer để transform array đúng
+  references?: ReferenceDto[];
 }

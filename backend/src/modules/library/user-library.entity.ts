@@ -11,11 +11,12 @@ import { User } from '../users/user.entity';
 import { Paper } from '../papers/paper.entity';
 
 export enum LibraryStatus {
-  TO_READ = 'to-read',
+  TO_READ = 'to_read',
   READING = 'reading',
-  READ = 'read',
-  FAVORITE = 'favorite',
+  COMPLETED = 'completed',
+  FAVORITES = 'favorites',
 }
+
 
 @Entity('user_library')
 @Index(['userId', 'paperId'], { unique: true })
@@ -31,9 +32,6 @@ export class UserLibrary {
   @Index()
   paperId: number;
 
-  @Column({ type: 'enum', enum: LibraryStatus, default: LibraryStatus.TO_READ })
-  @Index()
-  status: LibraryStatus;
 
   @Column({ nullable: true, type: 'int' })
   rating: number;

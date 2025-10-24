@@ -168,4 +168,17 @@ export class PapersController {
     return await this.papersService.updateStatus(id, dto, req.user.id);
   }
 
+  @Get('library')
+  @ApiOperation({ summary: 'Get all papers in user library (filterable)' })
+  async getLibrary(
+    @Query('status') status: 'to_read' | 'reading' | 'completed' | undefined,
+    @Query('favorite') favorite: 'true' | 'false' | undefined,
+    @Request() req,
+  ) {
+    // return this.papersService.getStatisticsInLibrary(req.user.id, status, favorite);
+    return this.papersService.getUserLibrary(req.user.id, status, favorite);
+  }
+
+  
+
 }
