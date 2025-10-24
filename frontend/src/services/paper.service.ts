@@ -1,3 +1,4 @@
+
 import axiosInstance from './api';
 import {
   Paper,
@@ -68,22 +69,17 @@ export const paperService = {
   },
 
 
-  //   updatePaperStatusFavorite: async (
-  //   paperId: number,
-  //   data: { status?: 'to_read' | 'reading' | 'completed'; favorite?: boolean }
-  // ) => {
-  //   const res = await axios.put(`/api/papers/${paperId}/status`, data);
-  //   return res.data;
-  // },
+  getLibrary: async (filters?: { status?: string; favorite?: boolean }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.favorite !== undefined)
+      params.append('favorite', filters.favorite.toString());
+
+    const response = await axiosInstance.get(`/papers/library?${params.toString()}`);
+    return response.data;
+  },
 
 
-  //   updatePaperStatus = async (
-  //   paperId: number,
-  //   data: { status?: 'to_read' | 'reading' | 'completed'; favorite?: boolean }
-  // ) => {
-  //   const res = await axios.put(`/api/papers/${paperId}/status`, data);
-  //   return res.data;
-  // };
 };
 
 

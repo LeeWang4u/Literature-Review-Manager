@@ -47,6 +47,10 @@ interface PaperFormData {
   doi?: string;
   url?: string;
   tags: Tag[];
+  references?: {
+    title?: string;
+    doi?: string;
+  }[];
 }
 
 const PaperFormPage: React.FC = () => {
@@ -81,6 +85,7 @@ const PaperFormPage: React.FC = () => {
       doi: '',
       url: '',
       tags: [],
+      references: [],
     },
   });
 
@@ -228,7 +233,12 @@ const PaperFormPage: React.FC = () => {
       journal: data.journal || undefined,
       doi: data.doi || undefined,
       url: data.url || undefined,
-      tagIds: allTagIds,
+      tagIds: data.tags.map((tag) => tag.id),
+      references: data.references?.map((ref) => ({
+        title: ref.title || '',
+        doi: ref.doi || undefined,
+      })),
+        // tagIds: allTagIds,
     };
 
     if (isEditMode) {
@@ -363,6 +373,10 @@ const PaperFormPage: React.FC = () => {
         doi: metadata.doi || '',
         url: metadata.url || '',
         tags: [], // Keep existing selected tags
+        references: metadata.references?.map((ref: any) => ({
+          title: ref.title || '',
+          doi: ref.doi || '',
+        })) || [],
       });
 
       // Mark metadata as extracted

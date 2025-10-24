@@ -1,10 +1,26 @@
+
 import axiosInstance from './api';
 import {
   LibraryItem,
   AddToLibraryData,
-  LibraryStatistics,
-  ReadingStatus,
+  // LibraryStatistics,
+  
 } from '@/types';
+
+
+export interface StatusDefinition {
+  key: string;
+  label: string;
+  color: 'default' | 'primary' | 'success' | 'warning';
+}
+
+export interface LibraryStatistics {
+  total: number;
+  byStatus: {
+    [key: string]: number;
+  };
+  favorites: number;
+}
 
 export const libraryService = {
   // Add paper to library
@@ -13,10 +29,10 @@ export const libraryService = {
     return response.data;
   },
 
-  // Get user library
-  getLibrary: async (status?: ReadingStatus): Promise<LibraryItem[]> => {
-    const params = status ? { status } : {};
-    const response = await axiosInstance.get<LibraryItem[]>('/library', { params });
+
+
+  getLibrary: async (filters?: { status?: string; favorite?: boolean }): Promise<LibraryItem[]> => {
+    const response = await axiosInstance.get<LibraryItem[]>('/library/filter', { params: filters });
     return response.data;
   },
 
@@ -27,7 +43,7 @@ export const libraryService = {
   },
 
   // Update reading status
-  updateStatus: async (id: number, status: ReadingStatus): Promise<LibraryItem> => {
+  updateStatus: async (id: number, status: string): Promise<LibraryItem> => {
     const response = await axiosInstance.put<LibraryItem>(`/library/${id}/status`, { status });
     return response.data;
   },
@@ -42,4 +58,17 @@ export const libraryService = {
   removeFromLibrary: async (id: number): Promise<void> => {
     await axiosInstance.delete(`/library/${id}`);
   },
+
+  getStatuses: async (): Promise<StatusDefinition[]> => {
+    const response = await axiosInstance.get<StatusDefinition[]>('/library/statuses');
+    return response.data;
+  },
+
+  toggleFavorite: async (id: number, favorite: boolean): Promise<void> => {
+    await axiosInstance.patch(`/library/${id}/favorite`, { favorite });
+
+  },
+
+
+
 };

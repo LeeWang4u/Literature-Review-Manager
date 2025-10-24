@@ -10,12 +10,14 @@ import {
   Req,
   ParseIntPipe,
   Query,
+  Patch,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { LibraryService } from './library.service';
 import { AddToLibraryDto, UpdateLibraryStatusDto, RatePaperDto } from './dto/library.dto';
 import { LibraryStatus } from './user-library.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { get } from 'http';
 
 @ApiTags('library')
 @ApiBearerAuth()
@@ -32,13 +34,13 @@ export class LibraryController {
     return this.libraryService.addToLibrary(req.user.id, addToLibraryDto);
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Get user library' })
-  @ApiQuery({ name: 'status', enum: LibraryStatus, required: false })
-  @ApiResponse({ status: 200, description: 'Return user library' })
-  getUserLibrary(@Req() req, @Query('status') status?: LibraryStatus) {
-    return this.libraryService.getUserLibrary(req.user.id, status);
-  }
+  // @Get()
+  // @ApiOperation({ summary: 'Get user library' })
+  // @ApiQuery({ name: 'status', enum: LibraryStatus, required: false })
+  // @ApiResponse({ status: 200, description: 'Return user library' })
+  // getUserLibrary(@Req() req, @Query('status') status?: LibraryStatus) {
+  //   return this.libraryService.getUserLibrary(req.user.id, status);
+  // }
 
   @Get('statistics')
   @ApiOperation({ summary: 'Get library statistics' })
@@ -78,4 +80,33 @@ export class LibraryController {
   removeFromLibrary(@Param('id', ParseIntPipe) id: number, @Req() req) {
     return this.libraryService.removeFromLibrary(id, req.user.id);
   }
+
+  @Get('statuses')
+  @ApiOperation({ summary: 'Get available reading statuses' })
+  @ApiResponse({ status: 200, description: 'Return reading statuses' })
+  getReadingStatuses(@Req() req) {
+    return this.libraryService.getStatuses();
+  }
+
+  @Patch(':id/favorite')
+  @ApiOperation({ summary: 'Toggle favorite status of a paper' })
+  @ApiResponse({ status: 200, description: 'Favorite status updated successfully' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  toggleFavorite(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req,
+    @Body('favorite') favorite: boolean,
+  ) {
+    return this.libraryService.toggleFavorite(id, favorite, req.user.id);
+  }
+
+  @Get('filter')
+  async getLibrary(
+    @Req() req,
+    @Query() filters: { status?: 'to_read' | 'reading' | 'completed'; favorite?: boolean },
+  ) {
+    return this.libraryService.getUserLibrary(req.user.id, filters);
+  }
+
+
 }

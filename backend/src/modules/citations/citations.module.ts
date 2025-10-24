@@ -7,8 +7,10 @@ import { Paper } from '../papers/paper.entity';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Citation, Paper])],
+  
   controllers: [CitationsController],
   providers: [CitationsService],
-  exports: [CitationsService],
+  // exports: [CitationsService],
+   exports: [CitationsService, TypeOrmModule],
 })
 export class CitationsModule {}

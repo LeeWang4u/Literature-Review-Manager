@@ -18,6 +18,7 @@ import { Note } from '../notes/note.entity';
 import { PdfFile } from '../pdf/pdf-file.entity';
 import { Citation } from '../citations/citation.entity';
 import { AiSummary } from '../summaries/ai-summary.entity';
+import { ApiHideProperty, ApiProperty } from '@nestjs/swagger';
 
 @Entity('papers')
 @Index('idx_title', ['title'])
@@ -30,7 +31,7 @@ export class Paper {
   @Column({ length: 500 })
   title: string;
 
-  @Column({ type: 'text' })
+  @Column({ type: 'text', nullable: true })
   authors: string;
 
   @Column({ type: 'text', nullable: true })
@@ -88,6 +89,11 @@ export class Paper {
   @Column({ type: 'boolean', default: false })
   favorite: boolean;
 
+
+  @Column({ type: 'boolean', default: false, name: 'is_reference' })
+  isReference: boolean;
+
+
   // Relations
   @ManyToOne(() => User, (user) => user.papers)
   @JoinColumn({ name: 'added_by' })
@@ -110,9 +116,15 @@ export class Paper {
   @OneToMany(() => PdfFile, (pdf) => pdf.paper)
   pdfFiles: PdfFile[];
 
+  // @ApiHideProperty()
+  // @ApiProperty({ type: () => [Citation] })
+  @ApiProperty({ type: () => Citation, isArray: true })
   @OneToMany(() => Citation, (citation) => citation.citingPaper)
   citations: Citation[];
 
+  // @ApiHideProperty()
+  // @ApiProperty({ type: () => [Citation] })
+  @ApiProperty({ type: () => Citation, isArray: true })
   @OneToMany(() => Citation, (citation) => citation.citedPaper)
   citedBy: Citation[];
 

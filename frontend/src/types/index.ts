@@ -60,6 +60,10 @@ export interface CreatePaperData {
   url?: string;
   keywords?: string[];
   tagIds?: number[];
+  references?: {
+    title: string;
+    doi?: string;
+  }[];
 }
 
 export interface SearchPaperParams {
@@ -127,20 +131,20 @@ export interface CreateNoteData {
   pageNumber?: number;
 }
 
-// Library types
-export enum ReadingStatus {
-  TO_READ = 'to-read',
-  READING = 'reading',
-  READ = 'read',
-  COMPLETED = 'completed',
-  FAVORITE = 'favorite',
-}
+// // Library types
+// export enum ReadingStatus {
+//   TO_READ = 'to-read',
+//   READING = 'reading',
+//   COMPLETED = 'completed',
+//   FAVORITE = 'favorite',
+// }
 
 export interface LibraryItem {
   id: number;
   paperId: number;
   paper: Paper;
-  status: ReadingStatus;
+  status: string;
+  favorite: boolean;
   rating?: number;
   addedAt: string;
   userId: number;
@@ -148,14 +152,16 @@ export interface LibraryItem {
 
 export interface AddToLibraryData {
   paperId: number;
-  status?: ReadingStatus;
+  status?: string;
 }
 
 export interface LibraryStatistics {
   total: number;
+  to_read: number;
   reading: number;
   completed: number;
-  byStatus: Record<ReadingStatus, number>;
+  favorites: number;
+  byStatus: Record<string, number>;
   averageRating: string | null;
 }
 
