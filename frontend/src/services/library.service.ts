@@ -19,6 +19,7 @@ export interface LibraryStatistics {
   byStatus: {
     [key: string]: number;
   };
+  favorites: number;
 }
 
 export const libraryService = {
