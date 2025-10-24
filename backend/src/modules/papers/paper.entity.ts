@@ -37,6 +37,9 @@ export class Paper {
   @Column({ type: 'text', nullable: true })
   abstract: string;
 
+  @Column({ type: 'longtext', nullable: true })
+  fullText: string;
+
   @Column({ name: 'publication_year', nullable: true })
   publicationYear: number;
 
@@ -86,8 +89,10 @@ export class Paper {
   @Column({ type: 'boolean', default: false })
   favorite: boolean;
 
+
   @Column({ type: 'boolean', default: false, name: 'is_reference' })
   isReference: boolean;
+
 
   // Relations
   @ManyToOne(() => User, (user) => user.papers)

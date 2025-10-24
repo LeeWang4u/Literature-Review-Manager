@@ -17,14 +17,26 @@ import {
   Divider,
   InputAdornment,
 } from '@mui/material';
-import { Save, Cancel, Add, AutoAwesome } from '@mui/icons-material';
+import { Save, Cancel, AutoAwesome } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { tagService } from '@/services/tag.service';
 import { paperMetadataService } from '@/services/paper-metadata.service';
 import { pdfService } from '@/services/pdf.service';
+import { summaryService } from '@/services/summary.service';
 import { CreatePaperData, Tag } from '@/types';
 import toast from 'react-hot-toast';
+
+// Extended tag interface for dropdown with metadata
+interface TagOption {
+  id: number;
+  name: string;
+  color: string;
+  paperCount?: number;
+  createdAt?: string | Date;
+  isAiSuggested?: boolean;
+  isNew?: boolean;
+}
 
 interface PaperFormData {
   title: string;
@@ -47,13 +59,16 @@ const PaperFormPage: React.FC = () => {
   const queryClient = useQueryClient();
   const isEditMode = !!id;
 
-  const [newTagName, setNewTagName] = useState('');
-  const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [doiInput, setDoiInput] = useState('');
   const [isExtractingMetadata, setIsExtractingMetadata] = useState(false);
   const [metadataExtracted, setMetadataExtracted] = useState(false);
   const [arxivPdfAvailable, setArxivPdfAvailable] = useState(false);
   const [arxivMetadata, setArxivMetadata] = useState<any>(null);
+  const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
+  const [isSuggestingTags, setIsSuggestingTags] = useState(false);
+  const [tagConfidence, setTagConfidence] = useState<number>(0);
+  const [allTagOptions, setAllTagOptions] = useState<TagOption[]>([]);
+  const [aiSuggestedTagNames, setAiSuggestedTagNames] = useState<Set<string>>(new Set());
 
   const {
     control,
@@ -86,6 +101,44 @@ const PaperFormPage: React.FC = () => {
     queryKey: ['tags'],
     queryFn: () => tagService.getAll(),
   });
+
+  // Merge available tags with AI suggestions for dropdown
+  useEffect(() => {
+    const mergedOptions: TagOption[] = [];
+    const seenIds = new Set<number>();
+    const seenNames = new Set<string>();
+
+    // Add existing tags first (check if they were AI suggested)
+    availableTags.forEach((tag) => {
+      const isFromAI = aiSuggestedTagNames.has(tag.name.toLowerCase());
+      mergedOptions.push({ 
+        ...tag, 
+        color: tag.color || '#1976d2',
+        isAiSuggested: isFromAI,  // Mark if it was from AI suggestion
+        isNew: false 
+      });
+      seenIds.add(tag.id);
+      seenNames.add(tag.name.toLowerCase());
+    });
+
+    // Add AI suggested tags that don't exist yet as real tags
+    suggestedTags.forEach((tagName) => {
+      if (!seenNames.has(tagName.toLowerCase())) {
+        // Create temporary tag object for AI suggestions that haven't been created
+        mergedOptions.push({
+          id: -Math.random(), // Temporary negative ID
+          name: tagName,
+          color: '#9c27b0', // Purple for AI suggestions
+          paperCount: 0,
+          isAiSuggested: true,
+          isNew: true,
+        } as TagOption);
+        seenNames.add(tagName.toLowerCase());
+      }
+    });
+
+    setAllTagOptions(mergedOptions);
+  }, [availableTags, suggestedTags, aiSuggestedTagNames]);
 
   // Pre-populate form when editing
   useEffect(() => {
@@ -131,21 +184,47 @@ const PaperFormPage: React.FC = () => {
     },
   });
 
-  // Create new tag mutation
-  const createTagMutation = useMutation({
-    mutationFn: (name: string) => tagService.create({ name }),
-    onSuccess: (newTag) => {
+  const onSubmit = async (data: PaperFormData) => {
+    // First, create any new tags (those with negative IDs)
+    const newTags = data.tags.filter((tag) => tag.id < 0);
+    const existingTags = data.tags.filter((tag) => tag.id > 0);
+    
+    const createdTagIds: number[] = [];
+    
+    if (newTags.length > 0) {
+      toast.loading(`Creating ${newTags.length} new tag(s)...`, { id: 'create-tags' });
+      
+      for (const newTag of newTags) {
+        try {
+          // Check if tag already exists (in case of race condition)
+          const existingTag = availableTags.find(
+            (t) => t.name.toLowerCase() === newTag.name.toLowerCase()
+          );
+          
+          if (existingTag) {
+            createdTagIds.push(existingTag.id);
+          } else {
+            // Create the tag
+            const createdTag = await tagService.create({ name: newTag.name });
+            createdTagIds.push(createdTag.id);
+          }
+        } catch (error: any) {
+          toast.error(error.response?.data?.message || `Failed to create tag "${newTag.name}"`);
+          toast.dismiss('create-tags');
+          return; // Stop if any tag creation fails
+        }
+      }
+      
+      toast.success(`Created ${newTags.length} new tag(s)!`, { id: 'create-tags' });
       queryClient.invalidateQueries({ queryKey: ['tags'] });
-      toast.success(`Tag "${newTag.name}" created!`);
-      setNewTagName('');
-      setIsCreatingTag(false);
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to create tag');
-    },
-  });
-
-  const onSubmit = (data: PaperFormData) => {
+    }
+    
+    // Combine existing tag IDs with newly created tag IDs
+    const allTagIds = [
+      ...existingTags.map((tag) => tag.id),
+      ...createdTagIds,
+    ];
+    
     const paperData: CreatePaperData = {
       title: data.title,
       authors: data.authors, // Keep as string - backend expects string
@@ -159,7 +238,7 @@ const PaperFormPage: React.FC = () => {
         title: ref.title || '',
         doi: ref.doi || undefined,
       })),
-        
+        // tagIds: allTagIds,
     };
 
     if (isEditMode) {
@@ -169,12 +248,109 @@ const PaperFormPage: React.FC = () => {
     }
   };
 
-  const handleCreateTag = async () => {
-    if (!newTagName.trim()) {
-      toast.error('Tag name cannot be empty');
+  const handleSuggestTags = async () => {
+    // Check if paper has enough data
+    const formValues = control._formValues;
+    if (!formValues.title || !formValues.abstract) {
+      toast.error('Please add title and abstract first to get AI tag suggestions');
       return;
     }
-    createTagMutation.mutate(newTagName.trim());
+
+    setIsSuggestingTags(true);
+    
+    try {
+      // For new papers, we need to create a temporary paper to get suggestions
+      // For edit mode, use the existing paper ID
+      let paperId = id ? Number(id) : null;
+      
+      if (!paperId) {
+        // Create a temporary paper for tag suggestions
+        toast.loading('Preparing for AI analysis...', { id: 'suggest-tags' });
+        
+        const tempPaper = await paperService.create({
+          title: formValues.title,
+          authors: formValues.authors || 'Unknown',
+          abstract: formValues.abstract,
+          publicationYear: formValues.publicationYear || new Date().getFullYear(),
+          journal: formValues.journal || '',
+          doi: formValues.doi || '',
+          url: formValues.url || '',
+          tagIds: [],
+        });
+        
+        paperId = tempPaper.id;
+      }
+
+      toast.loading('AI is analyzing your paper...', { id: 'suggest-tags' });
+      
+      const result = await summaryService.suggestTags(paperId!);
+      
+      // Save AI suggested tag names permanently
+      const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
+      setAiSuggestedTagNames(aiTagNamesSet);
+      
+      setSuggestedTags(result.suggested);
+      setTagConfidence(result.confidence);
+      
+      toast.success(
+        `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
+        { id: 'suggest-tags', duration: 4000 }
+      );
+      
+    } catch (error: any) {
+      console.error('Error suggesting tags:', error);
+      toast.error(
+        error.response?.data?.message || 'Failed to generate tag suggestions',
+        { id: 'suggest-tags' }
+      );
+    } finally {
+      setIsSuggestingTags(false);
+    }
+  };
+
+  // Auto suggest tags without creating paper (used after metadata extraction)
+  const handleAutoSuggestTags = async (title: string, abstract: string) => {
+    if (!title || !abstract) return;
+
+    setIsSuggestingTags(true);
+    
+    try {
+      // Create a temporary paper for tag suggestions
+      const tempPaper = await paperService.create({
+        title: title,
+        authors: control._formValues.authors || 'Unknown',
+        abstract: abstract,
+        publicationYear: control._formValues.publicationYear || new Date().getFullYear(),
+        journal: control._formValues.journal || '',
+        doi: control._formValues.doi || '',
+        url: control._formValues.url || '',
+        tagIds: [],
+      });
+
+      const result = await summaryService.suggestTags(tempPaper.id);
+      
+      // Save AI suggested tag names permanently
+      const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
+      setAiSuggestedTagNames(aiTagNamesSet);
+      
+      // Set suggested tags - they'll appear in dropdown automatically
+      setSuggestedTags(result.suggested);
+      setTagConfidence(result.confidence);
+      
+      // Delete the temporary paper
+      await paperService.delete(tempPaper.id);
+      
+      toast.success(
+        `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
+        { duration: 5000 }
+      );
+      
+    } catch (error: any) {
+      console.error('Error auto-suggesting tags:', error);
+      // Fail silently for auto-suggest
+    } finally {
+      setIsSuggestingTags(false);
+    }
   };
 
   const handleExtractMetadata = async () => {
@@ -185,7 +361,7 @@ const PaperFormPage: React.FC = () => {
 
     setIsExtractingMetadata(true);
     try {
-      const metadata: any = await paperMetadataService.extractMetadata(doiInput.trim());
+      const metadata = await paperMetadataService.extractMetadata(doiInput.trim());
       
       // Populate form with extracted metadata
       reset({
@@ -217,10 +393,18 @@ const PaperFormPage: React.FC = () => {
       } else {
         setArxivPdfAvailable(false);
         setArxivMetadata(null);
-        toast.success('Metadata extracted successfully! Click "Save Paper" to add it to your library.');
+        toast.success('Metadata extracted successfully! AI is analyzing tags...');
       }
       
       setDoiInput(''); // Clear input after successful extraction
+
+      // Automatically suggest tags if we have title and abstract
+      if (metadata.title && metadata.abstract) {
+        // Delay a bit to let the form update
+        setTimeout(() => {
+          handleAutoSuggestTags(metadata.title!, metadata.abstract!);
+        }, 500);
+      }
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || 'Failed to extract metadata. Please enter details manually.';
       toast.error(errorMessage);
@@ -619,7 +803,7 @@ const PaperFormPage: React.FC = () => {
                 />
               </Grid>
 
-              {/* Tags */}
+              {/* Tags - Enhanced with AI suggestions in dropdown */}
               <Grid item xs={12}>
                 <Controller
                   name="tags"
@@ -628,76 +812,271 @@ const PaperFormPage: React.FC = () => {
                     <Autocomplete
                       {...field}
                       multiple
-                      options={availableTags}
-                      getOptionLabel={(option) => option.name}
-                      value={field.value}
-                      onChange={(_, newValue) => field.onChange(newValue)}
-                      isOptionEqualToValue={(option, value) => option.id === value.id}
+                      freeSolo
+                      options={allTagOptions}
+                      getOptionLabel={(option) => {
+                        if (typeof option === 'string') return option;
+                        return option.name;
+                      }}
+                      value={field.value as (Tag | TagOption)[]}
+                      onChange={(_, newValue) => {
+                        const processedTags: Tag[] = [];
+                        
+                        for (const item of newValue) {
+                          if (typeof item === 'string') {
+                            // User typed a new tag name - create temporary tag
+                            const tagName = item.trim();
+                            if (!tagName) continue;
+                            
+                            // Check if tag already exists
+                            const existingTag = availableTags.find(
+                              (t) => t.name.toLowerCase() === tagName.toLowerCase()
+                            );
+                            
+                            if (existingTag) {
+                              processedTags.push(existingTag);
+                            } else {
+                              // Create temporary tag (negative ID means not yet saved)
+                              const tempTag: Tag = {
+                                id: -Math.random(), // Temporary negative ID
+                                name: tagName,
+                                color: '#1976d2', // Default color
+                                createdAt: new Date().toISOString(),
+                              };
+                              processedTags.push(tempTag);
+                            }
+                          } else if ('id' in item && item.id < 0) {
+                            // AI suggested or new tag with temporary ID
+                            const existingTag = availableTags.find(
+                              (t) => t.name.toLowerCase() === item.name.toLowerCase()
+                            );
+                            
+                            if (existingTag) {
+                              processedTags.push(existingTag);
+                            } else {
+                              // Keep as temporary tag
+                              const tempTag: Tag = {
+                                id: item.id,
+                                name: item.name,
+                                color: item.color || '#1976d2',
+                                createdAt: new Date().toISOString(),
+                              };
+                              processedTags.push(tempTag);
+                            }
+                          } else {
+                            // Existing tag object - convert TagOption to Tag
+                            const tagAsTag: Tag = {
+                              id: item.id,
+                              name: item.name,
+                              color: item.color,
+                              createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
+                            };
+                            processedTags.push(tagAsTag);
+                          }
+                        }
+                        
+                        field.onChange(processedTags);
+                      }}
+                      isOptionEqualToValue={(option, value) => {
+                        if (typeof option === 'string' || typeof value === 'string') return false;
+                        // Compare by name for AI suggestions with temporary IDs
+                        if (option.id < 0 || value.id < 0) {
+                          return option.name.toLowerCase() === value.name.toLowerCase();
+                        }
+                        return option.id === value.id;
+                      }}
+                      renderOption={(props, option) => {
+                        const isString = typeof option === 'string';
+                        const isAiSuggested = !isString && 'isAiSuggested' in option && option.isAiSuggested;
+                        const isNew = !isString && 'isNew' in option && option.isNew;
+                        const tagName = isString ? option : option.name;
+                        const tagColor = !isString ? option.color : '#1976d2';
+                        
+                        // Check if already selected
+                        const isSelected = field.value?.some((v: Tag) => 
+                          v.name.toLowerCase() === tagName.toLowerCase()
+                        );
+
+                        return (
+                          <Box
+                            component="li"
+                            {...props}
+                            sx={{
+                              display: 'flex !important',
+                              alignItems: 'center',
+                              gap: 1,
+                              opacity: isSelected ? 0.5 : 1,
+                              bgcolor: isSelected ? 'action.selected' : 'transparent',
+                            }}
+                          >
+                            {/* Color indicator */}
+                            <Box
+                              sx={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: '50%',
+                                bgcolor: tagColor,
+                                flexShrink: 0,
+                              }}
+                            />
+                            
+                            {/* Tag name */}
+                            <Typography sx={{ flexGrow: 1 }}>
+                              {tagName}
+                            </Typography>
+                            
+                            {/* Badges */}
+                            <Box sx={{ display: 'flex', gap: 0.5 }}>
+                              {isSelected && (
+                                <Chip
+                                  label="Selected"
+                                  size="small"
+                                  color="primary"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              )}
+                              {isAiSuggested && (
+                                <Chip
+                                  icon={<AutoAwesome sx={{ fontSize: 14 }} />}
+                                  label="AI"
+                                  size="small"
+                                  color="secondary"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              )}
+                              {isNew && !isAiSuggested && (
+                                <Chip
+                                  label="New"
+                                  size="small"
+                                  color="success"
+                                  sx={{ height: 20, fontSize: '0.7rem' }}
+                                />
+                              )}
+                            </Box>
+                          </Box>
+                        );
+                      }}
                       renderInput={(params) => (
                         <TextField
                           {...params}
                           label="Tags"
-                          placeholder="Select or create tags"
-                          helperText="Select existing tags or create new ones below"
+                          placeholder={
+                            suggestedTags.length > 0
+                              ? `${suggestedTags.length} AI suggestions available - Select from dropdown or type to create`
+                              : 'Select existing or type to create new tags'
+                          }
+                          helperText={
+                            suggestedTags.length > 0
+                              ? `🤖 ${suggestedTags.length} AI-suggested tags in dropdown (marked with AI badge) • ${Math.round(tagConfidence * 100)}% confidence • New tags will be created when you save the paper`
+                              : 'Select from dropdown or type to create new tags • New tags will be created when you save the paper'
+                          }
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {isSuggestingTags && <CircularProgress size={20} />}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
                         />
                       )}
                       renderTags={(value, getTagProps) =>
-                        value.map((option, index) => (
-                          <Chip
-                            label={option.name}
-                            {...getTagProps({ index })}
-                            key={option.id}
-                          />
-                        ))
+                        value.map((option, index) => {
+                          const tagName = typeof option === 'string' ? option : option.name;
+                          const tagColor = typeof option !== 'string' ? option.color : '#1976d2';
+                          const isNewTag = typeof option !== 'string' && option.id < 0;
+                          
+                          return (
+                            <Chip
+                              label={
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  {tagName}
+                                  {isNewTag && (
+                                    <Typography
+                                      component="span"
+                                      sx={{
+                                        fontSize: '0.65rem',
+                                        bgcolor: 'success.main',
+                                        color: 'white',
+                                        px: 0.5,
+                                        py: 0.1,
+                                        borderRadius: 0.5,
+                                        ml: 0.5,
+                                      }}
+                                    >
+                                      NEW
+                                    </Typography>
+                                  )}
+                                </Box>
+                              }
+                              {...getTagProps({ index })}
+                              key={typeof option === 'string' ? tagName : option.id}
+                              sx={{
+                                bgcolor: tagColor + '20',
+                                borderColor: tagColor,
+                                color: tagColor,
+                                border: '1px solid',
+                                fontWeight: 500,
+                              }}
+                            />
+                          );
+                        })
                       }
                       disabled={isSubmitting}
+                      filterOptions={(options, params) => {
+                        const filtered = options.filter((option) => {
+                          const optionName = typeof option === 'string' ? option : option.name;
+                          return optionName.toLowerCase().includes(params.inputValue.toLowerCase());
+                        });
+
+                        // If typing and no exact match, suggest creating new
+                        const { inputValue } = params;
+                        const isExisting = options.some((option) => {
+                          const optionName = typeof option === 'string' ? option : option.name;
+                          return optionName.toLowerCase() === inputValue.toLowerCase();
+                        });
+
+                        if (inputValue !== '' && !isExisting) {
+                          filtered.push({
+                            id: -Math.random(),
+                            name: `Create "${inputValue}"`,
+                            color: '#4caf50',
+                            paperCount: 0,
+                            isNew: true,
+                            isAiSuggested: false,
+                          } as TagOption);
+                        }
+
+                        return filtered;
+                      }}
                     />
                   )}
                 />
 
-                {/* Create New Tag */}
-                {isCreatingTag ? (
-                  <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
-                    <TextField
-                      size="small"
-                      label="New Tag Name"
-                      value={newTagName}
-                      onChange={(e) => setNewTagName(e.target.value)}
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleCreateTag();
-                        }
-                      }}
-                      disabled={createTagMutation.isPending}
-                    />
-                    <Button
-                      variant="contained"
-                      size="small"
-                      onClick={handleCreateTag}
-                      disabled={createTagMutation.isPending || !newTagName.trim()}
-                    >
-                      {createTagMutation.isPending ? <CircularProgress size={20} /> : 'Create'}
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => {
-                        setIsCreatingTag(false);
-                        setNewTagName('');
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </Box>
-                ) : (
+                {/* Info about AI tags in dropdown */}
+                {suggestedTags.length > 0 && (
+                  <Alert severity="success" sx={{ mt: 2 }}>
+                    <Typography variant="body2">
+                      🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above 
+                      (marked with <Chip label="AI" size="small" color="secondary" sx={{ height: 18, fontSize: '0.7rem' }} /> badge). 
+                      Confidence: <strong>{Math.round(tagConfidence * 100)}%</strong>
+                    </Typography>
+                  </Alert>
+                )}
+
+                {/* Manual trigger button */}
+                {!isSuggestingTags && suggestedTags.length === 0 && (
                   <Button
-                    startIcon={<Add />}
-                    onClick={() => setIsCreatingTag(true)}
+                    startIcon={<AutoAwesome />}
+                    onClick={handleSuggestTags}
+                    disabled={isSubmitting}
+                    variant="outlined"
                     size="small"
+                    color="secondary"
                     sx={{ mt: 1 }}
                   >
-                    Create New Tag
+                    Get AI Tag Suggestions
                   </Button>
                 )}
               </Grid>

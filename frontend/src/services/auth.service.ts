@@ -16,12 +16,15 @@ export const authService = {
 
   // Login user
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
+    console.log('🔐 AuthService: Sending login request...');
     const response = await axiosInstance.post<AuthResponse>('/auth/login', credentials);
+    console.log('✅ AuthService: Login response received:', response.data);
     
     // Save token and user to localStorage
     if (response.data.accessToken) {
       localStorage.setItem('access_token', response.data.accessToken);
       localStorage.setItem('user', JSON.stringify(response.data.user));
+      console.log('✅ AuthService: Token and user saved to localStorage');
     }
     
     return response.data;
@@ -48,6 +51,12 @@ export const authService = {
   getCurrentUser: (): User | null => {
     const userStr = localStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
+  },
+
+  // Change password
+  changePassword: async (data: { currentPassword: string; newPassword: string }): Promise<{ message: string }> => {
+    const response = await axiosInstance.post('/auth/change-password', data);
+    return response.data;
   },
 };
 

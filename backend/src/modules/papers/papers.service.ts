@@ -13,9 +13,11 @@ export class PapersService {
   constructor(
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
+
     @InjectRepository(Citation)
     private paperCitationsRepository: Repository<Citation>,
   ) { }
+
 
 
 
@@ -275,5 +277,13 @@ export class PapersService {
     return await query.orderBy('paper.updatedAt', 'DESC').getMany();
   }
 
+
+  /**
+   * Update fullText field for a paper
+   * Used after PDF text extraction
+   */
+  async updateFullText(id: number, fullText: string): Promise<void> {
+    await this.papersRepository.update(id, { fullText });
+  }
 
 }

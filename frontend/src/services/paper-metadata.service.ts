@@ -12,6 +12,21 @@ export interface ExtractedMetadata {
   doi?: string;
   url?: string;
   keywords?: string;
+  // ArXiv specific
+  arxivId?: string;
+  pdfAvailable?: boolean;
+}
+
+export interface PdfDownloadOptions {
+  useOAuth?: boolean;
+  publisherAccountId?: number;
+}
+
+export interface PdfDownloadResult {
+  success: boolean;
+  data?: string; // Base64 encoded PDF
+  filename?: string;
+  message?: string;
 }
 
 export const paperMetadataService = {
@@ -25,6 +40,7 @@ export const paperMetadataService = {
       '/papers/extract-metadata',
       { input },
     );
+    
     return response.data;
   },
 };

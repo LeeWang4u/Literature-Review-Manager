@@ -126,36 +126,36 @@ export class LibraryService {
     });
   }
 
-  async getUserLibrary(
-  userId: number,
-  filters: {
-    status?: 'to_read' | 'reading' | 'completed';
-    favorite?: boolean;
-  }
-): Promise<UserLibrary[]> {
-  const query = this.libraryRepository
-    .createQueryBuilder('library')
-    .innerJoinAndSelect('library.paper', 'paper')
-    .leftJoinAndSelect('paper.tags', 'tags') 
-    .where('library.userId = :userId', { userId });
+//   async getUserLibrary(
+//   userId: number,
+//   filters: {
+//     status?: 'to_read' | 'reading' | 'completed';
+//     favorite?: boolean;
+//   }
+// ): Promise<UserLibrary[]> {
+//   const query = this.libraryRepository
+//     .createQueryBuilder('library')
+//     .innerJoinAndSelect('library.paper', 'paper')
+//     .leftJoinAndSelect('paper.tags', 'tags') 
+//     .where('library.userId = :userId', { userId });
 
-  // Nếu có favorite flag, ưu tiên lấy theo favorite
-  if (filters.favorite !== undefined) {
-    const isFavorite = String(filters.favorite).toLowerCase() === 'true';
-    query.andWhere('paper.favorite = :favorite', { favorite: isFavorite });
-    // query.andWhere('paper.favorite = :favorite', { favorite: filters.favorite });
-  }
-  // Nếu không có favorite flag và có status, lọc theo status
-  else if (filters.status) {
-    query.andWhere('paper.status = :status', { status: filters.status });
-    // query.andWhere('library.status = :status', { status: filters.status });
-  }
+//   // Nếu có favorite flag, ưu tiên lấy theo favorite
+//   if (filters.favorite !== undefined) {
+//     const isFavorite = String(filters.favorite).toLowerCase() === 'true';
+//     query.andWhere('paper.favorite = :favorite', { favorite: isFavorite });
+//     // query.andWhere('paper.favorite = :favorite', { favorite: filters.favorite });
+//   }
+//   // Nếu không có favorite flag và có status, lọc theo status
+//   else if (filters.status) {
+//     query.andWhere('paper.status = :status', { status: filters.status });
+//     // query.andWhere('library.status = :status', { status: filters.status });
+//   }
 
-  // Sắp xếp theo thời gian thêm vào gần nhất
-  query.orderBy('library.addedAt', 'DESC');
+//   // Sắp xếp theo thời gian thêm vào gần nhất
+//   query.orderBy('library.addedAt', 'DESC');
 
-  return await query.getMany();
-}
+//   return await query.getMany();
+// }
 
   // async getStatistics(userId: number): Promise<{
   //   byStatus: Record<string, number>;
@@ -194,6 +194,36 @@ export class LibraryService {
   //     total: libraryItems.length,
   //   };
   // }
+
+  async getUserLibrary(
+  userId: number,
+  filters: {
+    status?: 'to_read' | 'reading' | 'completed';
+    favorite?: boolean | string; // Chấp nhận cả boolean và string
+  }
+): Promise<UserLibrary[]> {
+  const query = this.libraryRepository
+    .createQueryBuilder('library')
+    .innerJoinAndSelect('library.paper', 'paper')
+    .leftJoinAndSelect('paper.tags', 'tags')
+    .where('library.userId = :userId', { userId });
+
+  // 1. Áp dụng bộ lọc status nếu có
+  if (filters.status) {
+    query.andWhere('paper.status = :status', { status: filters.status });
+  }
+
+  // 2. Áp dụng bộ lọc favorite nếu có
+  // NestJS thường tự động chuyển 'true'/'false' thành boolean, nhưng cách này an toàn hơn
+  if (filters.favorite !== undefined && filters.favorite !== null) {
+    const isFavorite = String(filters.favorite).toLowerCase() === 'true';
+    query.andWhere('paper.favorite = :isFavorite', { isFavorite });
+  }
+
+  // Sắp xếp và trả về kết quả
+  query.orderBy('library.addedAt', 'DESC');
+  return await query.getMany();
+}
 
 async getStatistics(userId: number): Promise<{
     byStatus: Record<string, number>;

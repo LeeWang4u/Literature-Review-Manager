@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsBoolean, IsOptional } from 'class-validator';
+import { IsNotEmpty, IsBoolean, IsOptional, IsString, IsIn } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class GenerateSummaryDto {
@@ -6,4 +6,15 @@ export class GenerateSummaryDto {
   @IsOptional()
   @IsBoolean()
   forceRegenerate?: boolean;
+
+  @ApiProperty({ 
+    description: 'AI provider to use for summary generation', 
+    enum: ['gemini', 'openai'],
+    default: 'gemini',
+    required: false 
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['gemini', 'openai'])
+  provider?: string;
 }

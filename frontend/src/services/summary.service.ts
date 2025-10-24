@@ -21,4 +21,12 @@ export const summaryService = {
   delete: async (paperId: number): Promise<void> => {
     await axiosInstance.delete(`/summaries/${paperId}`);
   },
+
+  // Suggest tags for a paper using AI
+  suggestTags: async (paperId: number): Promise<{ suggested: string[]; confidence: number }> => {
+    const response = await axiosInstance.post<{ suggested: string[]; confidence: number }>(
+      `/summaries/suggest-tags/${paperId}`
+    );
+    return response.data;
+  },
 };

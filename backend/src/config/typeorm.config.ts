@@ -7,12 +7,12 @@ config();
 export const typeOrmConfig: TypeOrmModuleOptions = {
   type: 'mysql',
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT) || 3306,
+  port: parseInt(process.env.DB_PORT || '3306', 10),
   username: process.env.DB_USERNAME || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_DATABASE || 'literature_review_db',
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
-  synchronize: true, // Bật synchronize để tự động tạo/cập nhật schema
+  synchronize: false, // IMPORTANT: Set to false when using migrations to avoid conflicts
   logging: process.env.NODE_ENV === 'development',
   charset: 'utf8mb4',
   timezone: '+00:00',
@@ -24,7 +24,7 @@ export const typeOrmConfig: TypeOrmModuleOptions = {
 export const dataSourceOptions: DataSourceOptions = {
   type: 'mysql',
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT) || 3306,
+  port: parseInt(process.env.DB_PORT || '3306', 10),
   username: process.env.DB_USERNAME || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_DATABASE || 'literature_review_db',
