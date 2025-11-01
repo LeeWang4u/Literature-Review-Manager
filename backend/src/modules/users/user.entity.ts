@@ -13,6 +13,7 @@ import { UserLibrary } from '../library/user-library.entity';
 import { Note } from '../notes/note.entity';
 import { Citation } from '../citations/citation.entity';
 import { PdfFile } from '../pdf/pdf-file.entity';
+import { Tag } from '../tags/tag.entity';
 
 @Entity('users')
 export class User {
@@ -56,6 +57,9 @@ export class User {
   // Relations
   @OneToMany(() => Paper, (paper) => paper.user)
   papers: Paper[];
+
+  @OneToMany(() => Tag, (tag) => tag.owner)
+  tags: Tag[];
 
   @OneToMany(() => UserLibrary, (library) => library.user)
   library: UserLibrary[];

@@ -111,11 +111,11 @@ const PaperFormPage: React.FC = () => {
     // Add existing tags first (check if they were AI suggested)
     availableTags.forEach((tag) => {
       const isFromAI = aiSuggestedTagNames.has(tag.name.toLowerCase());
-      mergedOptions.push({ 
-        ...tag, 
+      mergedOptions.push({
+        ...tag,
         color: tag.color || '#1976d2',
         isAiSuggested: isFromAI,  // Mark if it was from AI suggestion
-        isNew: false 
+        isNew: false
       });
       seenIds.add(tag.id);
       seenNames.add(tag.name.toLowerCase());
@@ -157,19 +157,76 @@ const PaperFormPage: React.FC = () => {
   }, [existingPaper, isEditMode, reset]);
 
   // Create paper mutation
+  // const createMutation = useMutation({
+  //   mutationFn: (data: CreatePaperData) => paperService.create(data),
+  //   // onSuccess: () => {
+  //   //   queryClient.invalidateQueries({ queryKey: ['papers'] });
+  //   //   queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
+  //   //   toast.success('Paper created successfully!');
+  //   //   navigate('/papers');
+  //   // },
+  //   // onError: (error: any) => {
+  //   //   toast.error(error.response?.data?.message || 'Failed to create paper');
+  //   // },
+
+  //   onSuccess: (response) => {
+  //     //   if (!response.success) {
+  //     //     toast.error(response.message);
+  //     //     if (response.data?.id) {
+  //     //       if (window.confirm('This paper already exists. Do you want to view it?')) {
+  //     //         navigate(`/papers/${response.data.id}`);
+  //     //       }
+  //     //     }
+  //     //     return;
+  //     //   }
+
+  //     //   toast.success(response.message || 'Paper created successfully!');
+  //     //   queryClient.invalidateQueries({ queryKey: ['papers'] });
+  //     //   queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
+  //     //   navigate('/papers');
+  //     // },
+
+  //     if (response.success === false) {  // Strict check === false, undefined sẽ skip
+  //       toast.error(response.message || 'This paper already exists.');
+  //       if (response.data?.id) {
+  //         if (window.confirm('This paper already exists. Do you want to view it?')) {
+  //           navigate(`/papers/${response.data.id}`);
+  //         }
+  //       }
+  //       return;
+  //     }
+  //     // Phần success
+  //     toast.success(response.message || 'Paper created successfully!');
+  //     queryClient.invalidateQueries({ queryKey: ['papers'] });
+  //     queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
+  //     navigate('/papers');
+
+
+  //   );
+
+
   const createMutation = useMutation({
     mutationFn: (data: CreatePaperData) => paperService.create(data),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      if (response.success === false) {  // Strict check === false để skip nếu undefined
+        toast.error(response.message || 'This paper already exists.');
+        if (response.data?.id) {
+          if (window.confirm('This paper already exists. Do you want to view it?')) {
+            navigate(`/papers/${response.data.id}`);
+          }
+        }
+        return;
+      }
+      // Phần success
+      toast.success(response.message || 'Paper created successfully!');
       queryClient.invalidateQueries({ queryKey: ['papers'] });
       queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-      toast.success('Paper created successfully!');
       navigate('/papers');
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to create paper');
+    onError: (error: any) => {  // Handle real errors (network, server crash, etc.)
+      toast.error(error.message || 'Failed to create paper');
     },
   });
-
   // Update paper mutation
   const updateMutation = useMutation({
     mutationFn: (data: CreatePaperData) => paperService.update(Number(id), data),
@@ -188,19 +245,19 @@ const PaperFormPage: React.FC = () => {
     // First, create any new tags (those with negative IDs)
     const newTags = data.tags.filter((tag) => tag.id < 0);
     const existingTags = data.tags.filter((tag) => tag.id > 0);
-    
+
     const createdTagIds: number[] = [];
-    
+
     if (newTags.length > 0) {
       toast.loading(`Creating ${newTags.length} new tag(s)...`, { id: 'create-tags' });
-      
+
       for (const newTag of newTags) {
         try {
           // Check if tag already exists (in case of race condition)
           const existingTag = availableTags.find(
             (t) => t.name.toLowerCase() === newTag.name.toLowerCase()
           );
-          
+
           if (existingTag) {
             createdTagIds.push(existingTag.id);
           } else {
@@ -214,17 +271,17 @@ const PaperFormPage: React.FC = () => {
           return; // Stop if any tag creation fails
         }
       }
-      
+
       toast.success(`Created ${newTags.length} new tag(s)!`, { id: 'create-tags' });
       queryClient.invalidateQueries({ queryKey: ['tags'] });
     }
-    
+
     // Combine existing tag IDs with newly created tag IDs
     const allTagIds = [
       ...existingTags.map((tag) => tag.id),
       ...createdTagIds,
     ];
-    
+
     const paperData: CreatePaperData = {
       title: data.title,
       authors: data.authors, // Keep as string - backend expects string
@@ -238,7 +295,7 @@ const PaperFormPage: React.FC = () => {
         title: ref.title || '',
         doi: ref.doi || undefined,
       })),
-        // tagIds: allTagIds,
+      // tagIds: allTagIds,
     };
 
     if (isEditMode) {
@@ -257,16 +314,16 @@ const PaperFormPage: React.FC = () => {
     }
 
     setIsSuggestingTags(true);
-    
+
     try {
       // For new papers, we need to create a temporary paper to get suggestions
       // For edit mode, use the existing paper ID
       let paperId = id ? Number(id) : null;
-      
+
       if (!paperId) {
         // Create a temporary paper for tag suggestions
         toast.loading('Preparing for AI analysis...', { id: 'suggest-tags' });
-        
+
         const tempPaper = await paperService.create({
           title: formValues.title,
           authors: formValues.authors || 'Unknown',
@@ -277,26 +334,26 @@ const PaperFormPage: React.FC = () => {
           url: formValues.url || '',
           tagIds: [],
         });
-        
+
         paperId = tempPaper.id;
       }
 
       toast.loading('AI is analyzing your paper...', { id: 'suggest-tags' });
-      
+
       const result = await summaryService.suggestTags(paperId!);
-      
+
       // Save AI suggested tag names permanently
       const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
       setAiSuggestedTagNames(aiTagNamesSet);
-      
+
       setSuggestedTags(result.suggested);
       setTagConfidence(result.confidence);
-      
+
       toast.success(
         `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
         { id: 'suggest-tags', duration: 4000 }
       );
-      
+
     } catch (error: any) {
       console.error('Error suggesting tags:', error);
       toast.error(
@@ -313,7 +370,7 @@ const PaperFormPage: React.FC = () => {
     if (!title || !abstract) return;
 
     setIsSuggestingTags(true);
-    
+
     try {
       // Create a temporary paper for tag suggestions
       const tempPaper = await paperService.create({
@@ -328,23 +385,23 @@ const PaperFormPage: React.FC = () => {
       });
 
       const result = await summaryService.suggestTags(tempPaper.id);
-      
+
       // Save AI suggested tag names permanently
       const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
       setAiSuggestedTagNames(aiTagNamesSet);
-      
+
       // Set suggested tags - they'll appear in dropdown automatically
       setSuggestedTags(result.suggested);
       setTagConfidence(result.confidence);
-      
+
       // Delete the temporary paper
       await paperService.delete(tempPaper.id);
-      
+
       toast.success(
         `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
         { duration: 5000 }
       );
-      
+
     } catch (error: any) {
       console.error('Error auto-suggesting tags:', error);
       // Fail silently for auto-suggest
@@ -362,7 +419,7 @@ const PaperFormPage: React.FC = () => {
     setIsExtractingMetadata(true);
     try {
       const metadata = await paperMetadataService.extractMetadata(doiInput.trim());
-      
+
       // Populate form with extracted metadata
       reset({
         title: metadata.title || '',
@@ -395,7 +452,7 @@ const PaperFormPage: React.FC = () => {
         setArxivMetadata(null);
         toast.success('Metadata extracted successfully! AI is analyzing tags...');
       }
-      
+
       setDoiInput(''); // Clear input after successful extraction
 
       // Automatically suggest tags if we have title and abstract
@@ -424,9 +481,9 @@ const PaperFormPage: React.FC = () => {
 
     try {
       toast.loading('Downloading PDF from ArXiv...', { duration: 2000 });
-      
+
       const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
-      
+
       // Convert base64 to blob
       const binaryString = atob(result.data);
       const bytes = new Uint8Array(binaryString.length);
@@ -434,7 +491,7 @@ const PaperFormPage: React.FC = () => {
         bytes[i] = binaryString.charCodeAt(i);
       }
       const blob = new Blob([bytes], { type: 'application/pdf' });
-      
+
       // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -444,7 +501,7 @@ const PaperFormPage: React.FC = () => {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-      
+
       toast.success(`PDF downloaded: ${result.filename}`);
     } catch (error: any) {
       console.error('Error downloading ArXiv PDF:', error);
@@ -455,7 +512,7 @@ const PaperFormPage: React.FC = () => {
   const handleQuickSave = async () => {
     // Get current form values
     const formValues = control._formValues;
-    
+
     if (!formValues.title || !formValues.authors) {
       toast.error('Please extract metadata first (title and authors are required)');
       return;
@@ -477,17 +534,17 @@ const PaperFormPage: React.FC = () => {
       const createdPaper = await paperService.create(paperData);
       queryClient.invalidateQueries({ queryKey: ['papers'] });
       queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-      
+
       toast.success('Paper saved successfully!');
 
       // Step 2: Auto-upload ArXiv PDF if available
       if (arxivPdfAvailable && arxivMetadata && arxivMetadata.arxivId) {
         try {
           toast.loading('Uploading PDF from ArXiv...', { id: 'arxiv-upload' });
-          
+
           // Download PDF from ArXiv
           const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
-          
+
           // Convert base64 to blob
           const binaryString = atob(result.data);
           const bytes = new Uint8Array(binaryString.length);
@@ -495,18 +552,18 @@ const PaperFormPage: React.FC = () => {
             bytes[i] = binaryString.charCodeAt(i);
           }
           const blob = new Blob([bytes], { type: 'application/pdf' });
-          
+
           // Upload to server
           await pdfService.uploadBlob(createdPaper.id, blob, result.filename);
           queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.id] });
-          
+
           toast.success('PDF uploaded successfully!', { id: 'arxiv-upload' });
         } catch (pdfError: any) {
           console.error('Error auto-uploading PDF:', pdfError);
           toast.error('Paper saved but PDF upload failed', { id: 'arxiv-upload' });
         }
       }
-      
+
       // Navigate to paper detail page
       navigate(`/papers/${createdPaper.id}`);
     } catch (error: any) {
@@ -544,7 +601,7 @@ const PaperFormPage: React.FC = () => {
                     <strong>Quick Start:</strong> Enter a DOI or URL below to automatically populate paper details!
                   </Typography>
                 </Alert>
-                
+
                 <Box sx={{ mb: 3, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
                   <Grid container spacing={2} alignItems="center">
                     <Grid item xs={12} md={8}>
@@ -589,7 +646,7 @@ const PaperFormPage: React.FC = () => {
                       </Button>
                     </Grid>
                   </Grid>
-                  
+
                   {/* ArXiv PDF Download & Quick Save */}
                   {arxivPdfAvailable && arxivMetadata && (
                     <Box sx={{ mt: 2 }}>
@@ -621,7 +678,7 @@ const PaperFormPage: React.FC = () => {
                       </Alert>
                     </Box>
                   )}
-                  
+
                   {/* Quick Save for non-ArXiv papers */}
                   {metadataExtracted && !arxivPdfAvailable && (
                     <Box sx={{ mt: 2 }}>
@@ -821,18 +878,18 @@ const PaperFormPage: React.FC = () => {
                       value={field.value as (Tag | TagOption)[]}
                       onChange={(_, newValue) => {
                         const processedTags: Tag[] = [];
-                        
+
                         for (const item of newValue) {
                           if (typeof item === 'string') {
                             // User typed a new tag name - create temporary tag
                             const tagName = item.trim();
                             if (!tagName) continue;
-                            
+
                             // Check if tag already exists
                             const existingTag = availableTags.find(
                               (t) => t.name.toLowerCase() === tagName.toLowerCase()
                             );
-                            
+
                             if (existingTag) {
                               processedTags.push(existingTag);
                             } else {
@@ -850,7 +907,7 @@ const PaperFormPage: React.FC = () => {
                             const existingTag = availableTags.find(
                               (t) => t.name.toLowerCase() === item.name.toLowerCase()
                             );
-                            
+
                             if (existingTag) {
                               processedTags.push(existingTag);
                             } else {
@@ -874,7 +931,7 @@ const PaperFormPage: React.FC = () => {
                             processedTags.push(tagAsTag);
                           }
                         }
-                        
+
                         field.onChange(processedTags);
                       }}
                       isOptionEqualToValue={(option, value) => {
@@ -891,9 +948,9 @@ const PaperFormPage: React.FC = () => {
                         const isNew = !isString && 'isNew' in option && option.isNew;
                         const tagName = isString ? option : option.name;
                         const tagColor = !isString ? option.color : '#1976d2';
-                        
+
                         // Check if already selected
-                        const isSelected = field.value?.some((v: Tag) => 
+                        const isSelected = field.value?.some((v: Tag) =>
                           v.name.toLowerCase() === tagName.toLowerCase()
                         );
 
@@ -919,12 +976,12 @@ const PaperFormPage: React.FC = () => {
                                 flexShrink: 0,
                               }}
                             />
-                            
+
                             {/* Tag name */}
                             <Typography sx={{ flexGrow: 1 }}>
                               {tagName}
                             </Typography>
-                            
+
                             {/* Badges */}
                             <Box sx={{ display: 'flex', gap: 0.5 }}>
                               {isSelected && (
@@ -986,7 +1043,7 @@ const PaperFormPage: React.FC = () => {
                           const tagName = typeof option === 'string' ? option : option.name;
                           const tagColor = typeof option !== 'string' ? option.color : '#1976d2';
                           const isNewTag = typeof option !== 'string' && option.id < 0;
-                          
+
                           return (
                             <Chip
                               label={
@@ -1058,8 +1115,8 @@ const PaperFormPage: React.FC = () => {
                 {suggestedTags.length > 0 && (
                   <Alert severity="success" sx={{ mt: 2 }}>
                     <Typography variant="body2">
-                      🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above 
-                      (marked with <Chip label="AI" size="small" color="secondary" sx={{ height: 18, fontSize: '0.7rem' }} /> badge). 
+                      🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above
+                      (marked with <Chip label="AI" size="small" color="secondary" sx={{ height: 18, fontSize: '0.7rem' }} /> badge).
                       Confidence: <strong>{Math.round(tagConfidence * 100)}%</strong>
                     </Typography>
                   </Alert>

@@ -7,6 +7,7 @@ import { CreatePaperDto } from './dto/create-paper.dto';
 import { UpdatePaperDto } from './dto/update-paper.dto';
 import { SearchPaperDto } from './dto/search-paper.dto';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
+import { HttpException, HttpStatus } from '@nestjs/common';
 
 @Injectable()
 export class PapersService {
@@ -21,8 +22,32 @@ export class PapersService {
 
 
 
-  async create(createPaperDto: CreatePaperDto, userId: number): Promise<Paper> {
+  async create(createPaperDto: CreatePaperDto, userId: number): Promise<{ success: boolean; message: string; data: Paper }> {
     const { tagIds, references, ...paperData } = createPaperDto;
+
+
+    const whereConditions = [];
+    if (paperData.doi) {
+      whereConditions.push({ doi: paperData.doi, addedBy: userId, isReference: false });
+    }
+    if (paperData.url) {
+      whereConditions.push({ url: paperData.url, addedBy: userId, isReference: false });
+    }
+    if (whereConditions.length > 0) {
+      const existingPaper = await this.papersRepository.findOne({ where: whereConditions });
+      if (existingPaper) {
+        throw new HttpException(
+          {
+            success: false,
+            message: 'Bài báo này đã tồn tại trong thư viện của bạn.',
+            data: { id: existingPaper.id },
+          },
+          HttpStatus.CONFLICT, // 409
+        );
+      }
+    }
+
+
 
     const paper = this.papersRepository.create({
       ...paperData,
@@ -85,17 +110,26 @@ export class PapersService {
     }
 
 
-    return await this.findOne(savedPaper.id);
+    return {
+      success: true,
+      message: 'Paper created successfully',
+      data: await this.findOne(savedPaper.id)
+    };
   }
 
-  async findAll(searchDto: SearchPaperDto): Promise<{ data: Paper[]; meta: any }> {
+  async findAll(searchDto: SearchPaperDto, userId: number): Promise<{ data: Paper[]; meta: any }> {
     const { page = 1, pageSize = 20, sortBy = 'createdAt', sortOrder = 'DESC' } = searchDto;
 
     const query = this.papersRepository
       .createQueryBuilder('paper')
       .leftJoinAndSelect('paper.tags', 'tags')
       .leftJoinAndSelect('paper.user', 'user')
+<<<<<<< HEAD
       .where('paper.is_reference = :isReference', { isReference: false });
+=======
+      .where('paper.added_by = :userId', { userId })
+      .andWhere('paper.is_reference = :isReference', { isReference: false });
+>>>>>>> hien
 
     // Search query
     if (searchDto.query) {
