@@ -9,9 +9,9 @@ export class TagsService {
   constructor(
     @InjectRepository(Tag)
     private tagsRepository: Repository<Tag>,
-  ) {}
+  ) { }
 
-  async create(createTagDto: CreateTagDto): Promise<Tag> {
+  async create(createTagDto: CreateTagDto, userId: number): Promise<Tag> {
     const existing = await this.tagsRepository.findOne({
       where: { name: createTagDto.name },
     });
@@ -20,14 +20,21 @@ export class TagsService {
       throw new ConflictException('Tag name already exists');
     }
 
-    const tag = this.tagsRepository.create(createTagDto);
+    const { ...tagData } = createTagDto;
+
+    const tag = this.tagsRepository.create(
+      { ...tagData, owner: userId }
+    );
     return await this.tagsRepository.save(tag);
   }
 
-  async findAll(): Promise<Tag[]> {
-    return await this.tagsRepository.find({
-      order: { name: 'ASC' },
-    });
+  async findAll(userId: number): Promise<Tag[]> {
+    const tags = await this.tagsRepository
+      .createQueryBuilder('tag')
+      .where('tag.owner = :userId', { userId })
+      .orderBy('tag.name', 'ASC')
+      .getMany();
+    return tags;
   }
 
   async findOne(id: number): Promise<Tag> {

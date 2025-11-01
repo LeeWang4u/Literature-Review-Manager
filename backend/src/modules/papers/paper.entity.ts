@@ -28,7 +28,7 @@ export class Paper {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ length: 500 })
+  @Column({ length: 2048 })
   title: string;
 
   @Column({ type: 'text', nullable: true })

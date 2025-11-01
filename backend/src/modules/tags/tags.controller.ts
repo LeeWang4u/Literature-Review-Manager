@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, ParseIntPipe, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { TagsService } from './tags.service';
 import { CreateTagDto, UpdateTagDto } from './dto/tag.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
 
 @ApiTags('Tags')
 @Controller('tags')
@@ -13,14 +14,14 @@ export class TagsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new tag' })
-  async create(@Body() createTagDto: CreateTagDto) {
-    return await this.tagsService.create(createTagDto);
+  async create(@Body() createTagDto: CreateTagDto, @Request() req) {
+    return await this.tagsService.create(createTagDto, req.user.id);
   }
 
   @Get()
   @ApiOperation({ summary: 'Get all tags' })
-  async findAll() {
-    return await this.tagsService.findAll();
+  async findAll(@Request() req) {
+    return await this.tagsService.findAll(req.user.id);
   }
 
   @Get(':id')

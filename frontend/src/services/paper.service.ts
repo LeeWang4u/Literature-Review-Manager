@@ -10,9 +10,40 @@ import {
 
 export const paperService = {
   // Create new paper
-  create: async (data: CreatePaperData): Promise<Paper> => {
-    const response = await axiosInstance.post<Paper>('/papers', data);
-    return response.data;
+  // create: async (data: CreatePaperData): Promise<Paper> => {
+  //   // const response = await axiosInstance.post<Paper>('/papers', data);
+  //   // return response.data;
+
+  //   try {
+  //     const response = await axiosInstance.post<Paper>('/papers', data);
+  //     return response.data;
+  //   } catch (error: any) {
+  //     // Nếu backend trả lỗi có message, ném lại để FE xử lý
+  //     if (error.response?.data?.message) {
+  //       throw new Error(error.response.data.message);
+  //     }
+  //     throw error;
+  //   }
+  // },
+
+  // create: async (data: CreatePaperData): Promise<{ success: boolean; message: string; data?: Paper }> => {
+  //   const response = await axiosInstance.post('/papers', data);
+  //   return response.data;
+  // },
+
+  create: async (data: CreatePaperData): Promise<{ success: boolean; message: string; data?: any }> => {
+    try {
+      const response = await axiosInstance.post('/papers', data);
+      return response.data.data;
+    } catch (error: any) {
+      // Xử lý lỗi từ NestJS
+      const res = error.response?.data;
+      return {
+        success: false,
+        message: res?.message || 'Failed to create paper',
+        data: res?.data,
+      };
+    }
   },
 
   // Get all papers with search and pagination

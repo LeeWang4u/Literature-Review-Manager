@@ -113,8 +113,8 @@ export class PapersController {
   @Get()
   @ApiOperation({ summary: 'Get all papers with search and filters' })
   @ApiResponse({ status: 200, description: 'Papers retrieved successfully' })
-  async findAll(@Query() searchDto: SearchPaperDto) {
-    return await this.papersService.findAll(searchDto);
+  async findAll(@Query() searchDto: SearchPaperDto, @Request() req) {
+    return await this.papersService.findAll(searchDto, req.user.id);
   }
 
   @Get('statistics')
