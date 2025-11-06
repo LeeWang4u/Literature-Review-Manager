@@ -145,12 +145,8 @@ export class PapersService {
       .createQueryBuilder('paper')
       .leftJoinAndSelect('paper.tags', 'tags')
       .leftJoinAndSelect('paper.user', 'user')
-<<<<<<< HEAD
-      .where('paper.is_reference = :isReference', { isReference: false });
-=======
       .where('paper.added_by = :userId', { userId })
       .andWhere('paper.is_reference = :isReference', { isReference: false });
->>>>>>> hien
 
     // Search query
     if (searchDto.query) {
