@@ -17,7 +17,7 @@ import {
 import { Add, Search } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { NoteCard } from '@/components/notes/NoteCard';
-import { NoteDialog, NoteFormDataSubmit} from '@/components/notes/NoteDialog';
+import { NoteDialog, NoteFormData} from '@/components/notes/NoteDialog';
 import { noteService } from '@/services/note.service';
 import { paperService } from '@/services/paper.service';
 import { Note } from '@/types';
@@ -46,7 +46,7 @@ const NotesPage: React.FC = () => {
 
   // Create note mutation
   const createMutation = useMutation({
-    mutationFn: (data: NoteFormDataSubmit) =>
+    mutationFn: (data: NoteFormData) =>
       noteService.create({
         ...data,
         paperId: Number(paperId),
@@ -64,7 +64,7 @@ const NotesPage: React.FC = () => {
 
   // Update note mutation
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: NoteFormDataSubmit }) =>
+    mutationFn: ({ id, data }: { id: number; data: NoteFormData }) =>
       noteService.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes', paperId] });
@@ -104,7 +104,7 @@ const NotesPage: React.FC = () => {
     setEditingNote(null);
   };
 
-  const handleSubmit = (data: NoteFormDataSubmit) => {
+  const handleSubmit = (data: NoteFormData) => {
     if (editingNote) {
       updateMutation.mutate({ id: editingNote.id, data });
     } else {
@@ -125,7 +125,7 @@ const NotesPage: React.FC = () => {
     (note.highlightedText?.toLowerCase() || '').includes(query)
     );
   });
-
+ 
   if (isLoading) {
     return (
       <MainLayout>

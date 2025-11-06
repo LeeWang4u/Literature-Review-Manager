@@ -15,6 +15,10 @@ export interface ExtractedMetadata {
   // ArXiv specific
   arxivId?: string;
   pdfAvailable?: boolean;
+  references?: {
+    title?: string;
+    doi?: string;
+  }[];
 }
 
 export interface PdfDownloadOptions {

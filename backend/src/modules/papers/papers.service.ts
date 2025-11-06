@@ -8,6 +8,7 @@ import { UpdatePaperDto } from './dto/update-paper.dto';
 import { SearchPaperDto } from './dto/search-paper.dto';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { LibraryService } from '../library/library.service';
 
 @Injectable()
 export class PapersService {
@@ -17,6 +18,8 @@ export class PapersService {
 
     @InjectRepository(Citation)
     private paperCitationsRepository: Repository<Citation>,
+
+    // private libraryService: LibraryService,
   ) { }
 
 
@@ -70,18 +73,30 @@ export class PapersService {
     if (references && references.length > 0) {
       for (const ref of references) {
         // Bỏ qua những ref không có DOI
-        if (!ref.doi || ref.doi.trim() === '') continue;
+        // if (!ref.doi || ref.doi.trim() === '') continue;
+        if ((!ref.title || ref.title.trim() === '') && (!ref.doi || ref.doi.trim() === '')) continue;
+
+        const cleanTitle = ref.title ? ref.title.replace(/\\n/g, '\n') : '';
+        const cleanDoi = ref.doi ? ref.doi.trim() : '';
+
 
         // Kiểm tra xem reference này đã tồn tại chưa (theo DOI)
-        let refPaper = await this.papersRepository.findOne({
-          where: { doi: ref.doi },
-        });
+        // let refPaper = await this.papersRepository.findOne({
+        //   where: { doi: ref.doi },
+        // });
+        // Chỉ kiểm tra trong DB nếu có DOI
+        let refPaper: Paper | null = null;
+        if (cleanDoi) {
+          refPaper = await this.papersRepository.findOne({
+            where: { doi: cleanDoi },
+          });
+        }
 
         // Nếu chưa có thì thêm mới, đánh dấu là reference
         if (!refPaper) {
           refPaper = this.papersRepository.create({
-            title: ref.title || '',
-            doi: ref.doi,
+            title: cleanTitle || '',
+            doi: ref.doi || '',
             isReference: true,
             addedBy: userId,  // Optional: Set addedBy cho refPaper nếu cần, giả sử user cũng "add" ref
           });
@@ -108,6 +123,12 @@ export class PapersService {
         // Nếu duplicate, bỏ qua hoặc log, tùy bạn
       }
     }
+
+    // const addToLibraryDto = {
+    //   paperId: savedPaper.id,
+    // }
+
+    // await this.libraryService.addToLibrary(userId, addToLibraryDto);
 
 
     return {
