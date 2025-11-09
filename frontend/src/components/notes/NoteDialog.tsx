@@ -17,7 +17,7 @@ import { Note } from '@/types';
 interface NoteDialogProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: NoteFormDataSubmit) => void;
+  onSubmit: (data: NoteFormData) => void;
   existingNote?: Note | null;
   isLoading?: boolean;
 }
@@ -29,11 +29,11 @@ export interface NoteFormData {
   pageNumber?: number;
 }
 
-export interface NoteFormDataSubmit {
-  content: string;
-  highlightedText?: string;
-  pageNumber?: number;
-}
+// export interface NoteFormDataSubmit {
+//   content: string;
+//   highlightedText?: string;
+//   pageNumber?: number;
+// }
 
 export const NoteDialog: React.FC<NoteDialogProps> = ({
   open,
@@ -76,13 +76,9 @@ export const NoteDialog: React.FC<NoteDialogProps> = ({
   }, [open, existingNote, reset]);
 
   const handleFormSubmit = (data: NoteFormData) => {
-    const noteData: NoteFormDataSubmit = {
-      content: `${data.title}\n${data.content}`,
-      highlightedText: data.highlightedText,
-      pageNumber: data.pageNumber,
-    };
 
-    onSubmit(noteData);
+
+    onSubmit(data);
   };
 
   const handleClose = () => {

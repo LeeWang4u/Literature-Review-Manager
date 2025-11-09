@@ -275,5 +275,12 @@ async getStatistics(userId: number): Promise<{
     return libraryItem;
   }
 
+  async inLibrary(userId: number, paperId: number): Promise<boolean> {
+    const count = await this.libraryRepository.count({
+      where: { userId, paperId },
+    });
+    return count > 0;
+  }
+
   
 }

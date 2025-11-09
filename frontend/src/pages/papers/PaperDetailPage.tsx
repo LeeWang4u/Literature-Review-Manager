@@ -95,13 +95,22 @@ const PaperDetailPage: React.FC = () => {
     enabled: !!id,
   });
 
-  // Check if paper is in library
-  const { data: library = [] } = useQuery({
-    queryKey: ['library'],
-    queryFn: () => libraryService.getLibrary(),
-  });
+  // // Check if paper is in library
+  // const { data: library = [] } = useQuery({
+  //   queryKey: ['library', id],
+  //   // queryFn: () => libraryService.getLibrary(),
+  //   queryFn: () => libraryService.getInLibrary(Number(id)),
+  // });
 
-  const isInLibrary = library.some(item => item.paperId === Number(id));
+
+
+  // // const isInLibrary = library.some(item => item.paperId === Number(id));
+  // const isInLibrary = library.some(item => item.paperId === Number(id));
+
+  const { data: isInLibrary = false } = useQuery({
+    queryKey: ['inLibrary', id],
+    queryFn: () => libraryService.getInLibrary(Number(id)),
+  });
 
   // Add to library mutation
   const addToLibraryMutation = useMutation({
@@ -174,7 +183,7 @@ const PaperDetailPage: React.FC = () => {
 
     try {
       await paperService.updateStatusAndFavorite(paper.id, { status: newStatus });
-      
+
       queryClient.invalidateQueries({ queryKey: ['library'] });
       queryClient.invalidateQueries({ queryKey: ['library-statistics'] });
     } catch {

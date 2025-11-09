@@ -25,6 +25,9 @@ export class Note {
   paperId: number;
 
   @Column({ type: 'text' })
+  title: string;
+
+  @Column({ type: 'text' })
   content: string;
 
   @Column({ name: 'highlight_text', type: 'text', nullable: true })

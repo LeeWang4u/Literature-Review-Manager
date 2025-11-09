@@ -16,6 +16,7 @@ import {
   Alert,
   Divider,
   InputAdornment,
+  Dialog, DialogTitle, DialogContent, DialogActions, DialogContentText,
 } from '@mui/material';
 import { Save, Cancel, AutoAwesome } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
@@ -69,6 +70,9 @@ const PaperFormPage: React.FC = () => {
   const [tagConfidence, setTagConfidence] = useState<number>(0);
   const [allTagOptions, setAllTagOptions] = useState<TagOption[]>([]);
   const [aiSuggestedTagNames, setAiSuggestedTagNames] = useState<Set<string>>(new Set());
+
+  const [openDialog, setOpenDialog] = useState(false);
+  const [existingPaperId, setExistingPaperId] = useState<number | null>(null);
 
   const {
     control,
@@ -156,64 +160,16 @@ const PaperFormPage: React.FC = () => {
     }
   }, [existingPaper, isEditMode, reset]);
 
-  // Create paper mutation
-  // const createMutation = useMutation({
-  //   mutationFn: (data: CreatePaperData) => paperService.create(data),
-  //   // onSuccess: () => {
-  //   //   queryClient.invalidateQueries({ queryKey: ['papers'] });
-  //   //   queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-  //   //   toast.success('Paper created successfully!');
-  //   //   navigate('/papers');
-  //   // },
-  //   // onError: (error: any) => {
-  //   //   toast.error(error.response?.data?.message || 'Failed to create paper');
-  //   // },
-
-  //   onSuccess: (response) => {
-  //     //   if (!response.success) {
-  //     //     toast.error(response.message);
-  //     //     if (response.data?.id) {
-  //     //       if (window.confirm('This paper already exists. Do you want to view it?')) {
-  //     //         navigate(`/papers/${response.data.id}`);
-  //     //       }
-  //     //     }
-  //     //     return;
-  //     //   }
-
-  //     //   toast.success(response.message || 'Paper created successfully!');
-  //     //   queryClient.invalidateQueries({ queryKey: ['papers'] });
-  //     //   queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-  //     //   navigate('/papers');
-  //     // },
-
-  //     if (response.success === false) {  // Strict check === false, undefined sẽ skip
-  //       toast.error(response.message || 'This paper already exists.');
-  //       if (response.data?.id) {
-  //         if (window.confirm('This paper already exists. Do you want to view it?')) {
-  //           navigate(`/papers/${response.data.id}`);
-  //         }
-  //       }
-  //       return;
-  //     }
-  //     // Phần success
-  //     toast.success(response.message || 'Paper created successfully!');
-  //     queryClient.invalidateQueries({ queryKey: ['papers'] });
-  //     queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-  //     navigate('/papers');
-
-
-  //   );
 
 
   const createMutation = useMutation({
     mutationFn: (data: CreatePaperData) => paperService.create(data),
     onSuccess: (response) => {
-      if (response.success === false) {  // Strict check === false để skip nếu undefined
-        toast.error(response.message || 'This paper already exists.');
+      if (response.success === false) {  
+
         if (response.data?.id) {
-          if (window.confirm('This paper already exists. Do you want to view it?')) {
-            navigate(`/papers/${response.data.id}`);
-          }
+          setExistingPaperId(response.data.id);
+          setOpenDialog(true);
         }
         return;
       }
@@ -384,6 +340,8 @@ const PaperFormPage: React.FC = () => {
         tagIds: [],
       });
 
+      // console.log('Temporary paper created :', tempPaper);
+
       const result = await summaryService.suggestTags(tempPaper.id);
 
       // Save AI suggested tag names permanently
@@ -395,6 +353,8 @@ const PaperFormPage: React.FC = () => {
       setTagConfidence(result.confidence);
 
       // Delete the temporary paper
+      // console.log('Deleting temporary paper with ID:', tempPaper.id);
+      // await paperService.delete(tempPaper.data.id);
       await paperService.delete(tempPaper.id);
 
       toast.success(
@@ -554,8 +514,8 @@ const PaperFormPage: React.FC = () => {
           const blob = new Blob([bytes], { type: 'application/pdf' });
 
           // Upload to server
-          await pdfService.uploadBlob(createdPaper.id, blob, result.filename);
-          queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.id] });
+          await pdfService.uploadBlob(createdPaper.data.id, blob, result.filename);
+          queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.data.id] });
 
           toast.success('PDF uploaded successfully!', { id: 'arxiv-upload' });
         } catch (pdfError: any) {
@@ -565,7 +525,7 @@ const PaperFormPage: React.FC = () => {
       }
 
       // Navigate to paper detail page
-      navigate(`/papers/${createdPaper.id}`);
+      navigate(`/papers/${createdPaper.data.id}`);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to save paper');
     }
@@ -585,596 +545,626 @@ const PaperFormPage: React.FC = () => {
   }
 
   return (
-    <MainLayout>
-      <Container maxWidth="md">
-        <Paper elevation={3} sx={{ p: 4, mt: 2 }}>
-          <Typography variant="h4" gutterBottom>
-            {isEditMode ? 'Edit Paper' : 'Add New Paper'}
-          </Typography>
+    <>
+      {/* Popup Dialog */}
+      <Dialog open={openDialog} onClose={() => setOpenDialog(false)}>
+        <DialogTitle>Paper Already Exists</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This paper already exists. Do you want to view it?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
+          <Button
+            onClick={() => {
+              setOpenDialog(false);
+              if (existingPaperId) navigate(`/papers/${existingPaperId}`);
+            }}
+            color="primary"
+            variant="contained"
+          >
+            View Paper
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-          <Box component="form" onSubmit={handleSubmit(onSubmit)} noValidate sx={{ mt: 3 }}>
-            {/* Auto-fill Section - Only show in create mode */}
-            {!isEditMode && (
-              <>
-                <Alert severity="info" sx={{ mb: 3 }}>
-                  <Typography variant="body2">
-                    <strong>Quick Start:</strong> Enter a DOI or URL below to automatically populate paper details!
-                  </Typography>
-                </Alert>
+      <MainLayout>
+        <Container maxWidth="md">
+          <Paper elevation={3} sx={{ p: 4, mt: 2 }}>
+            <Typography variant="h4" gutterBottom>
+              {isEditMode ? 'Edit Paper' : 'Add New Paper'}
+            </Typography>
 
-                <Box sx={{ mb: 3, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
-                  <Grid container spacing={2} alignItems="center">
-                    <Grid item xs={12} md={8}>
-                      <TextField
-                        fullWidth
-                        label="DOI or URL"
-                        placeholder="e.g., 10.1038/nature12373 or https://arxiv.org/abs/2103.15348"
-                        value={doiInput}
-                        onChange={(e) => {
-                          setDoiInput(e.target.value);
-                          // Reset all extraction states when input changes
-                          setMetadataExtracted(false);
-                          setArxivPdfAvailable(false);
-                          setArxivMetadata(null);
-                        }}
-                        disabled={isExtractingMetadata}
-                        onKeyPress={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleExtractMetadata();
-                          }
-                        }}
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <AutoAwesome color="primary" />
-                            </InputAdornment>
-                          ),
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={4}>
-                      <Button
-                        fullWidth
-                        variant="contained"
-                        color="primary"
-                        onClick={handleExtractMetadata}
-                        disabled={isExtractingMetadata || !doiInput.trim()}
-                        startIcon={isExtractingMetadata ? <CircularProgress size={20} /> : <AutoAwesome />}
-                      >
-                        {isExtractingMetadata ? 'Extracting...' : 'Auto-fill'}
-                      </Button>
-                    </Grid>
-                  </Grid>
+            <Box component="form" onSubmit={handleSubmit(onSubmit)} noValidate sx={{ mt: 3 }}>
+              {/* Auto-fill Section - Only show in create mode */}
+              {!isEditMode && (
+                <>
+                  <Alert severity="info" sx={{ mb: 3 }}>
+                    <Typography variant="body2">
+                      <strong>Quick Start:</strong> Enter a DOI or URL below to automatically populate paper details!
+                    </Typography>
+                  </Alert>
 
-                  {/* ArXiv PDF Download & Quick Save */}
-                  {arxivPdfAvailable && arxivMetadata && (
-                    <Box sx={{ mt: 2 }}>
-                      <Alert severity="success">
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <Box sx={{ flexGrow: 1 }}>
-                            <Typography variant="body2">
-                              <strong>PDF Available!</strong> This is an ArXiv paper with free PDF access.
-                            </Typography>
-                          </Box>
-                          <Button
-                            variant="outlined"
-                            color="success"
-                            size="small"
-                            onClick={handleDownloadArxivPdf}
-                          >
-                            Download PDF
-                          </Button>
-                          <Button
-                            variant="contained"
-                            color="success"
-                            size="small"
-                            onClick={handleQuickSave}
-                            startIcon={<Save />}
-                          >
-                            Save Paper
-                          </Button>
-                        </Box>
-                      </Alert>
-                    </Box>
-                  )}
-
-                  {/* Quick Save for non-ArXiv papers */}
-                  {metadataExtracted && !arxivPdfAvailable && (
-                    <Box sx={{ mt: 2 }}>
-                      <Alert severity="info">
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <Typography variant="body2">
-                            Metadata extracted successfully! Click "Save Paper" to add it, or continue editing below.
-                          </Typography>
-                          <Button
-                            variant="contained"
-                            color="primary"
-                            size="small"
-                            onClick={handleQuickSave}
-                            startIcon={<Save />}
-                            sx={{ ml: 2 }}
-                          >
-                            Save Paper
-                          </Button>
-                        </Box>
-                      </Alert>
-                    </Box>
-                  )}
-                </Box>
-
-                <Divider sx={{ mb: 3 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Or enter manually
-                  </Typography>
-                </Divider>
-              </>
-            )}
-
-            <Grid container spacing={3}>
-              {/* Title */}
-              <Grid item xs={12}>
-                <Controller
-                  name="title"
-                  control={control}
-                  rules={{ required: 'Title is required' }}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      label="Title"
-                      fullWidth
-                      required
-                      error={!!errors.title}
-                      helperText={errors.title?.message}
-                      disabled={isSubmitting}
-                    />
-                  )}
-                />
-              </Grid>
-
-              {/* Authors */}
-              <Grid item xs={12}>
-                <Controller
-                  name="authors"
-                  control={control}
-                  rules={{ required: 'Authors are required' }}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      label="Authors"
-                      fullWidth
-                      required
-                      placeholder="e.g., Smith, J., Doe, A."
-                      error={!!errors.authors}
-                      helperText={errors.authors?.message || 'Separate multiple authors with commas'}
-                      disabled={isSubmitting}
-                    />
-                  )}
-                />
-              </Grid>
-
-              {/* Abstract */}
-              <Grid item xs={12}>
-                <Controller
-                  name="abstract"
-                  control={control}
-                  rules={{ required: 'Abstract is required' }}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      label="Abstract"
-                      fullWidth
-                      required
-                      multiline
-                      rows={6}
-                      error={!!errors.abstract}
-                      helperText={errors.abstract?.message}
-                      disabled={isSubmitting}
-                    />
-                  )}
-                />
-              </Grid>
-
-              {/* Publication Year */}
-              <Grid item xs={12} md={6}>
-                <Controller
-                  name="publicationYear"
-                  control={control}
-                  rules={{
-                    required: 'Publication year is required',
-                    min: { value: 1900, message: 'Year must be after 1900' },
-                    max: { value: new Date().getFullYear() + 1, message: 'Year cannot be in the future' },
-                  }}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      label="Publication Year"
-                      type="number"
-                      fullWidth
-                      required
-                      error={!!errors.publicationYear}
-                      helperText={errors.publicationYear?.message}
-                      disabled={isSubmitting}
-                      onChange={(e) => field.onChange(parseInt(e.target.value, 10))}
-                    />
-                  )}
-                />
-              </Grid>
-
-              {/* Journal */}
-              <Grid item xs={12} md={6}>
-                <Controller
-                  name="journal"
-                  control={control}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      label="Journal"
-                      fullWidth
-                      placeholder="e.g., Nature, Science"
-                      disabled={isSubmitting}
-                    />
-                  )}
-                />
-              </Grid>
-
-              {/* DOI */}
-              <Grid item xs={12} md={6}>
-                <Controller
-                  name="doi"
-                  control={control}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      label="DOI"
-                      fullWidth
-                      placeholder="e.g., 10.1000/xyz123"
-                      disabled={isSubmitting}
-                    />
-                  )}
-                />
-              </Grid>
-
-              {/* URL */}
-              <Grid item xs={12} md={6}>
-                <Controller
-                  name="url"
-                  control={control}
-                  rules={{
-                    pattern: {
-                      value: /^https?:\/\/.+/,
-                      message: 'Please enter a valid URL (http:// or https://)',
-                    },
-                  }}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
-                      label="URL"
-                      fullWidth
-                      placeholder="https://example.com/paper"
-                      error={!!errors.url}
-                      helperText={errors.url?.message}
-                      disabled={isSubmitting}
-                    />
-                  )}
-                />
-              </Grid>
-
-              {/* Tags - Enhanced with AI suggestions in dropdown */}
-              <Grid item xs={12}>
-                <Controller
-                  name="tags"
-                  control={control}
-                  render={({ field }) => (
-                    <Autocomplete
-                      {...field}
-                      multiple
-                      freeSolo
-                      options={allTagOptions}
-                      getOptionLabel={(option) => {
-                        if (typeof option === 'string') return option;
-                        return option.name;
-                      }}
-                      value={field.value as (Tag | TagOption)[]}
-                      onChange={(_, newValue) => {
-                        const processedTags: Tag[] = [];
-
-                        for (const item of newValue) {
-                          if (typeof item === 'string') {
-                            // User typed a new tag name - create temporary tag
-                            const tagName = item.trim();
-                            if (!tagName) continue;
-
-                            // Check if tag already exists
-                            const existingTag = availableTags.find(
-                              (t) => t.name.toLowerCase() === tagName.toLowerCase()
-                            );
-
-                            if (existingTag) {
-                              processedTags.push(existingTag);
-                            } else {
-                              // Create temporary tag (negative ID means not yet saved)
-                              const tempTag: Tag = {
-                                id: -Math.random(), // Temporary negative ID
-                                name: tagName,
-                                color: '#1976d2', // Default color
-                                createdAt: new Date().toISOString(),
-                              };
-                              processedTags.push(tempTag);
-                            }
-                          } else if ('id' in item && item.id < 0) {
-                            // AI suggested or new tag with temporary ID
-                            const existingTag = availableTags.find(
-                              (t) => t.name.toLowerCase() === item.name.toLowerCase()
-                            );
-
-                            if (existingTag) {
-                              processedTags.push(existingTag);
-                            } else {
-                              // Keep as temporary tag
-                              const tempTag: Tag = {
-                                id: item.id,
-                                name: item.name,
-                                color: item.color || '#1976d2',
-                                createdAt: new Date().toISOString(),
-                              };
-                              processedTags.push(tempTag);
-                            }
-                          } else {
-                            // Existing tag object - convert TagOption to Tag
-                            const tagAsTag: Tag = {
-                              id: item.id,
-                              name: item.name,
-                              color: item.color,
-                              createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
-                            };
-                            processedTags.push(tagAsTag);
-                          }
-                        }
-
-                        field.onChange(processedTags);
-                      }}
-                      isOptionEqualToValue={(option, value) => {
-                        if (typeof option === 'string' || typeof value === 'string') return false;
-                        // Compare by name for AI suggestions with temporary IDs
-                        if (option.id < 0 || value.id < 0) {
-                          return option.name.toLowerCase() === value.name.toLowerCase();
-                        }
-                        return option.id === value.id;
-                      }}
-                      renderOption={(props, option) => {
-                        const isString = typeof option === 'string';
-                        const isAiSuggested = !isString && 'isAiSuggested' in option && option.isAiSuggested;
-                        const isNew = !isString && 'isNew' in option && option.isNew;
-                        const tagName = isString ? option : option.name;
-                        const tagColor = !isString ? option.color : '#1976d2';
-
-                        // Check if already selected
-                        const isSelected = field.value?.some((v: Tag) =>
-                          v.name.toLowerCase() === tagName.toLowerCase()
-                        );
-
-                        return (
-                          <Box
-                            component="li"
-                            {...props}
-                            sx={{
-                              display: 'flex !important',
-                              alignItems: 'center',
-                              gap: 1,
-                              opacity: isSelected ? 0.5 : 1,
-                              bgcolor: isSelected ? 'action.selected' : 'transparent',
-                            }}
-                          >
-                            {/* Color indicator */}
-                            <Box
-                              sx={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: '50%',
-                                bgcolor: tagColor,
-                                flexShrink: 0,
-                              }}
-                            />
-
-                            {/* Tag name */}
-                            <Typography sx={{ flexGrow: 1 }}>
-                              {tagName}
-                            </Typography>
-
-                            {/* Badges */}
-                            <Box sx={{ display: 'flex', gap: 0.5 }}>
-                              {isSelected && (
-                                <Chip
-                                  label="Selected"
-                                  size="small"
-                                  color="primary"
-                                  sx={{ height: 20, fontSize: '0.7rem' }}
-                                />
-                              )}
-                              {isAiSuggested && (
-                                <Chip
-                                  icon={<AutoAwesome sx={{ fontSize: 14 }} />}
-                                  label="AI"
-                                  size="small"
-                                  color="secondary"
-                                  sx={{ height: 20, fontSize: '0.7rem' }}
-                                />
-                              )}
-                              {isNew && !isAiSuggested && (
-                                <Chip
-                                  label="New"
-                                  size="small"
-                                  color="success"
-                                  sx={{ height: 20, fontSize: '0.7rem' }}
-                                />
-                              )}
-                            </Box>
-                          </Box>
-                        );
-                      }}
-                      renderInput={(params) => (
+                  <Box sx={{ mb: 3, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+                    <Grid container spacing={2} alignItems="center">
+                      <Grid item xs={12} md={8}>
                         <TextField
-                          {...params}
-                          label="Tags"
-                          placeholder={
-                            suggestedTags.length > 0
-                              ? `${suggestedTags.length} AI suggestions available - Select from dropdown or type to create`
-                              : 'Select existing or type to create new tags'
-                          }
-                          helperText={
-                            suggestedTags.length > 0
-                              ? `🤖 ${suggestedTags.length} AI-suggested tags in dropdown (marked with AI badge) • ${Math.round(tagConfidence * 100)}% confidence • New tags will be created when you save the paper`
-                              : 'Select from dropdown or type to create new tags • New tags will be created when you save the paper'
-                          }
+                          fullWidth
+                          label="DOI or URL"
+                          placeholder="e.g., 10.1038/nature12373 or https://arxiv.org/abs/2103.15348"
+                          value={doiInput}
+                          onChange={(e) => {
+                            setDoiInput(e.target.value);
+                            // Reset all extraction states when input changes
+                            setMetadataExtracted(false);
+                            setArxivPdfAvailable(false);
+                            setArxivMetadata(null);
+                          }}
+                          disabled={isExtractingMetadata}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleExtractMetadata();
+                            }
+                          }}
                           InputProps={{
-                            ...params.InputProps,
-                            endAdornment: (
-                              <>
-                                {isSuggestingTags && <CircularProgress size={20} />}
-                                {params.InputProps.endAdornment}
-                              </>
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <AutoAwesome color="primary" />
+                              </InputAdornment>
                             ),
                           }}
                         />
-                      )}
-                      renderTags={(value, getTagProps) =>
-                        value.map((option, index) => {
-                          const tagName = typeof option === 'string' ? option : option.name;
-                          const tagColor = typeof option !== 'string' ? option.color : '#1976d2';
-                          const isNewTag = typeof option !== 'string' && option.id < 0;
+                      </Grid>
+                      <Grid item xs={12} md={4}>
+                        <Button
+                          fullWidth
+                          variant="contained"
+                          color="primary"
+                          onClick={handleExtractMetadata}
+                          disabled={isExtractingMetadata || !doiInput.trim()}
+                          startIcon={isExtractingMetadata ? <CircularProgress size={20} /> : <AutoAwesome />}
+                        >
+                          {isExtractingMetadata ? 'Extracting...' : 'Auto-fill'}
+                        </Button>
+                      </Grid>
+                    </Grid>
 
-                          return (
-                            <Chip
-                              label={
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  {tagName}
-                                  {isNewTag && (
-                                    <Typography
-                                      component="span"
-                                      sx={{
-                                        fontSize: '0.65rem',
-                                        bgcolor: 'success.main',
-                                        color: 'white',
-                                        px: 0.5,
-                                        py: 0.1,
-                                        borderRadius: 0.5,
-                                        ml: 0.5,
-                                      }}
-                                    >
-                                      NEW
-                                    </Typography>
-                                  )}
-                                </Box>
-                              }
-                              {...getTagProps({ index })}
-                              key={typeof option === 'string' ? tagName : option.id}
-                              sx={{
-                                bgcolor: tagColor + '20',
-                                borderColor: tagColor,
-                                color: tagColor,
-                                border: '1px solid',
-                                fontWeight: 500,
-                              }}
-                            />
-                          );
-                        })
-                      }
-                      disabled={isSubmitting}
-                      filterOptions={(options, params) => {
-                        const filtered = options.filter((option) => {
-                          const optionName = typeof option === 'string' ? option : option.name;
-                          return optionName.toLowerCase().includes(params.inputValue.toLowerCase());
-                        });
+                    {/* ArXiv PDF Download & Quick Save */}
+                    {arxivPdfAvailable && arxivMetadata && (
+                      <Box sx={{ mt: 2 }}>
+                        <Alert severity="success">
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <Box sx={{ flexGrow: 1 }}>
+                              <Typography variant="body2">
+                                <strong>PDF Available!</strong> This is an ArXiv paper with free PDF access.
+                              </Typography>
+                            </Box>
+                            <Button
+                              variant="outlined"
+                              color="success"
+                              size="small"
+                              onClick={handleDownloadArxivPdf}
+                            >
+                              Download PDF
+                            </Button>
+                            <Button
+                              variant="contained"
+                              color="success"
+                              size="small"
+                              onClick={handleQuickSave}
+                              startIcon={<Save />}
+                            >
+                              Save Paper
+                            </Button>
+                          </Box>
+                        </Alert>
+                      </Box>
+                    )}
 
-                        // If typing and no exact match, suggest creating new
-                        const { inputValue } = params;
-                        const isExisting = options.some((option) => {
-                          const optionName = typeof option === 'string' ? option : option.name;
-                          return optionName.toLowerCase() === inputValue.toLowerCase();
-                        });
+                    {/* Quick Save for non-ArXiv papers */}
+                    {metadataExtracted && !arxivPdfAvailable && (
+                      <Box sx={{ mt: 2 }}>
+                        <Alert severity="info">
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Typography variant="body2">
+                              Metadata extracted successfully! Click "Save Paper" to add it, or continue editing below.
+                            </Typography>
+                            <Button
+                              variant="contained"
+                              color="primary"
+                              size="small"
+                              onClick={handleQuickSave}
+                              startIcon={<Save />}
+                              sx={{ ml: 2 }}
+                            >
+                              Save Paper
+                            </Button>
+                          </Box>
+                        </Alert>
+                      </Box>
+                    )}
+                  </Box>
 
-                        if (inputValue !== '' && !isExisting) {
-                          filtered.push({
-                            id: -Math.random(),
-                            name: `Create "${inputValue}"`,
-                            color: '#4caf50',
-                            paperCount: 0,
-                            isNew: true,
-                            isAiSuggested: false,
-                          } as TagOption);
-                        }
-
-                        return filtered;
-                      }}
-                    />
-                  )}
-                />
-
-                {/* Info about AI tags in dropdown */}
-                {suggestedTags.length > 0 && (
-                  <Alert severity="success" sx={{ mt: 2 }}>
-                    <Typography variant="body2">
-                      🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above
-                      (marked with <Chip label="AI" size="small" color="secondary" sx={{ height: 18, fontSize: '0.7rem' }} /> badge).
-                      Confidence: <strong>{Math.round(tagConfidence * 100)}%</strong>
+                  <Divider sx={{ mb: 3 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Or enter manually
                     </Typography>
-                  </Alert>
-                )}
-
-                {/* Manual trigger button */}
-                {!isSuggestingTags && suggestedTags.length === 0 && (
-                  <Button
-                    startIcon={<AutoAwesome />}
-                    onClick={handleSuggestTags}
-                    disabled={isSubmitting}
-                    variant="outlined"
-                    size="small"
-                    color="secondary"
-                    sx={{ mt: 1 }}
-                  >
-                    Get AI Tag Suggestions
-                  </Button>
-                )}
-              </Grid>
-
-              {/* Error Display */}
-              {(createMutation.isError || updateMutation.isError) && (
-                <Grid item xs={12}>
-                  <Alert severity="error">
-                    {(createMutation.error as any)?.response?.data?.message ||
-                      (updateMutation.error as any)?.response?.data?.message ||
-                      'An error occurred while saving the paper'}
-                  </Alert>
-                </Grid>
+                  </Divider>
+                </>
               )}
 
-              {/* Action Buttons */}
-              <Grid item xs={12}>
-                <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-                  <Button
-                    variant="outlined"
-                    startIcon={<Cancel />}
-                    onClick={() => navigate(isEditMode ? `/papers/${id}` : '/papers')}
-                    disabled={isSubmitting}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    startIcon={isSubmitting ? <CircularProgress size={20} /> : <Save />}
-                    disabled={isSubmitting}
-                  >
-                    {isSubmitting ? 'Saving...' : isEditMode ? 'Update Paper' : 'Create Paper'}
-                  </Button>
-                </Box>
+
+
+              <Grid container spacing={3}>
+                {/* Title */}
+                <Grid item xs={12}>
+                  <Controller
+                    name="title"
+                    control={control}
+                    rules={{ required: 'Title is required' }}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="Title"
+                        fullWidth
+                        required
+                        error={!!errors.title}
+                        helperText={errors.title?.message}
+                        disabled={isSubmitting}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                {/* Authors */}
+                <Grid item xs={12}>
+                  <Controller
+                    name="authors"
+                    control={control}
+                    rules={{ required: 'Authors are required' }}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="Authors"
+                        fullWidth
+                        required
+                        placeholder="e.g., Smith, J., Doe, A."
+                        error={!!errors.authors}
+                        helperText={errors.authors?.message || 'Separate multiple authors with commas'}
+                        disabled={isSubmitting}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                {/* Abstract */}
+                <Grid item xs={12}>
+                  <Controller
+                    name="abstract"
+                    control={control}
+                    rules={{ required: 'Abstract is required' }}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="Abstract"
+                        fullWidth
+                        required
+                        multiline
+                        rows={6}
+                        error={!!errors.abstract}
+                        helperText={errors.abstract?.message}
+                        disabled={isSubmitting}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                {/* Publication Year */}
+                <Grid item xs={12} md={6}>
+                  <Controller
+                    name="publicationYear"
+                    control={control}
+                    rules={{
+                      required: 'Publication year is required',
+                      min: { value: 1900, message: 'Year must be after 1900' },
+                      max: { value: new Date().getFullYear() + 1, message: 'Year cannot be in the future' },
+                    }}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="Publication Year"
+                        type="number"
+                        fullWidth
+                        required
+                        error={!!errors.publicationYear}
+                        helperText={errors.publicationYear?.message}
+                        disabled={isSubmitting}
+                        onChange={(e) => field.onChange(parseInt(e.target.value, 10))}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                {/* Journal */}
+                <Grid item xs={12} md={6}>
+                  <Controller
+                    name="journal"
+                    control={control}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="Journal"
+                        fullWidth
+                        placeholder="e.g., Nature, Science"
+                        disabled={isSubmitting}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                {/* DOI */}
+                <Grid item xs={12} md={6}>
+                  <Controller
+                    name="doi"
+                    control={control}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="DOI"
+                        fullWidth
+                        placeholder="e.g., 10.1000/xyz123"
+                        disabled={isSubmitting}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                {/* URL */}
+                <Grid item xs={12} md={6}>
+                  <Controller
+                    name="url"
+                    control={control}
+                    rules={{
+                      pattern: {
+                        value: /^https?:\/\/.+/,
+                        message: 'Please enter a valid URL (http:// or https://)',
+                      },
+                    }}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="URL"
+                        fullWidth
+                        placeholder="https://example.com/paper"
+                        error={!!errors.url}
+                        helperText={errors.url?.message}
+                        disabled={isSubmitting}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                {/* Tags - Enhanced with AI suggestions in dropdown */}
+                <Grid item xs={12}>
+                  <Controller
+                    name="tags"
+                    control={control}
+                    render={({ field }) => (
+                      <Autocomplete
+                        {...field}
+                        multiple
+                        freeSolo
+                        options={allTagOptions}
+                        getOptionLabel={(option) => {
+                          if (typeof option === 'string') return option;
+                          return option.name;
+                        }}
+                        value={field.value as (Tag | TagOption)[]}
+                        onChange={(_, newValue) => {
+                          const processedTags: Tag[] = [];
+
+                          for (const item of newValue) {
+                            if (typeof item === 'string') {
+                              // User typed a new tag name - create temporary tag
+                              const tagName = item.trim();
+                              if (!tagName) continue;
+
+                              // Check if tag already exists
+                              const existingTag = availableTags.find(
+                                (t) => t.name.toLowerCase() === tagName.toLowerCase()
+                              );
+
+                              if (existingTag) {
+                                processedTags.push(existingTag);
+                              } else {
+                                // Create temporary tag (negative ID means not yet saved)
+                                const tempTag: Tag = {
+                                  id: -Math.random(), // Temporary negative ID
+                                  name: tagName,
+                                  color: '#1976d2', // Default color
+                                  createdAt: new Date().toISOString(),
+                                };
+                                processedTags.push(tempTag);
+                              }
+                            } else if ('id' in item && item.id < 0) {
+                              // AI suggested or new tag with temporary ID
+                              const existingTag = availableTags.find(
+                                (t) => t.name.toLowerCase() === item.name.toLowerCase()
+                              );
+
+                              if (existingTag) {
+                                processedTags.push(existingTag);
+                              } else {
+                                // Keep as temporary tag
+                                const tempTag: Tag = {
+                                  id: item.id,
+                                  name: item.name,
+                                  color: item.color || '#1976d2',
+                                  createdAt: new Date().toISOString(),
+                                };
+                                processedTags.push(tempTag);
+                              }
+                            } else {
+                              // Existing tag object - convert TagOption to Tag
+                              const tagAsTag: Tag = {
+                                id: item.id,
+                                name: item.name,
+                                color: item.color,
+                                createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
+                              };
+                              processedTags.push(tagAsTag);
+                            }
+                          }
+
+                          field.onChange(processedTags);
+                        }}
+                        isOptionEqualToValue={(option, value) => {
+                          if (typeof option === 'string' || typeof value === 'string') return false;
+                          // Compare by name for AI suggestions with temporary IDs
+                          if (option.id < 0 || value.id < 0) {
+                            return option.name.toLowerCase() === value.name.toLowerCase();
+                          }
+                          return option.id === value.id;
+                        }}
+                        renderOption={(props, option) => {
+                          const isString = typeof option === 'string';
+                          const isAiSuggested = !isString && 'isAiSuggested' in option && option.isAiSuggested;
+                          const isNew = !isString && 'isNew' in option && option.isNew;
+                          const tagName = isString ? option : option.name;
+                          const tagColor = !isString ? option.color : '#1976d2';
+
+                          // Check if already selected
+                          const isSelected = field.value?.some((v: Tag) =>
+                            v.name.toLowerCase() === tagName.toLowerCase()
+                          );
+
+                          return (
+                            <Box
+                              component="li"
+                              {...props}
+                              sx={{
+                                display: 'flex !important',
+                                alignItems: 'center',
+                                gap: 1,
+                                opacity: isSelected ? 0.5 : 1,
+                                bgcolor: isSelected ? 'action.selected' : 'transparent',
+                              }}
+                            >
+                              {/* Color indicator */}
+                              <Box
+                                sx={{
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: '50%',
+                                  bgcolor: tagColor,
+                                  flexShrink: 0,
+                                }}
+                              />
+
+                              {/* Tag name */}
+                              <Typography sx={{ flexGrow: 1 }}>
+                                {tagName}
+                              </Typography>
+
+                              {/* Badges */}
+                              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                {isSelected && (
+                                  <Chip
+                                    label="Selected"
+                                    size="small"
+                                    color="primary"
+                                    sx={{ height: 20, fontSize: '0.7rem' }}
+                                  />
+                                )}
+                                {isAiSuggested && (
+                                  <Chip
+                                    icon={<AutoAwesome sx={{ fontSize: 14 }} />}
+                                    label="AI"
+                                    size="small"
+                                    color="secondary"
+                                    sx={{ height: 20, fontSize: '0.7rem' }}
+                                  />
+                                )}
+                                {isNew && !isAiSuggested && (
+                                  <Chip
+                                    label="New"
+                                    size="small"
+                                    color="success"
+                                    sx={{ height: 20, fontSize: '0.7rem' }}
+                                  />
+                                )}
+                              </Box>
+                            </Box>
+                          );
+                        }}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Tags"
+                            placeholder={
+                              suggestedTags.length > 0
+                                ? `${suggestedTags.length} AI suggestions available - Select from dropdown or type to create`
+                                : 'Select existing or type to create new tags'
+                            }
+                            helperText={
+                              suggestedTags.length > 0
+                                ? `🤖 ${suggestedTags.length} AI-suggested tags in dropdown (marked with AI badge) • ${Math.round(tagConfidence * 100)}% confidence • New tags will be created when you save the paper`
+                                : 'Select from dropdown or type to create new tags • New tags will be created when you save the paper'
+                            }
+                            InputProps={{
+                              ...params.InputProps,
+                              endAdornment: (
+                                <>
+                                  {isSuggestingTags && <CircularProgress size={20} />}
+                                  {params.InputProps.endAdornment}
+                                </>
+                              ),
+                            }}
+                          />
+                        )}
+                        renderTags={(value, getTagProps) =>
+                          value.map((option, index) => {
+                            const tagName = typeof option === 'string' ? option : option.name;
+                            const tagColor = typeof option !== 'string' ? option.color : '#1976d2';
+                            const isNewTag = typeof option !== 'string' && option.id < 0;
+
+                            return (
+                              <Chip
+                                label={
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    {tagName}
+                                    {isNewTag && (
+                                      <Typography
+                                        component="span"
+                                        sx={{
+                                          fontSize: '0.65rem',
+                                          bgcolor: 'success.main',
+                                          color: 'white',
+                                          px: 0.5,
+                                          py: 0.1,
+                                          borderRadius: 0.5,
+                                          ml: 0.5,
+                                        }}
+                                      >
+                                        NEW
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                }
+                                {...getTagProps({ index })}
+                                key={typeof option === 'string' ? tagName : option.id}
+                                sx={{
+                                  bgcolor: tagColor + '20',
+                                  borderColor: tagColor,
+                                  color: tagColor,
+                                  border: '1px solid',
+                                  fontWeight: 500,
+                                }}
+                              />
+                            );
+                          })
+                        }
+                        disabled={isSubmitting}
+                        filterOptions={(options, params) => {
+                          const filtered = options.filter((option) => {
+                            const optionName = typeof option === 'string' ? option : option.name;
+                            return optionName.toLowerCase().includes(params.inputValue.toLowerCase());
+                          });
+
+                          // If typing and no exact match, suggest creating new
+                          const { inputValue } = params;
+                          const isExisting = options.some((option) => {
+                            const optionName = typeof option === 'string' ? option : option.name;
+                            return optionName.toLowerCase() === inputValue.toLowerCase();
+                          });
+
+                          if (inputValue !== '' && !isExisting) {
+                            filtered.push({
+                              id: -Math.random(),
+                              name: `Create "${inputValue}"`,
+                              color: '#4caf50',
+                              paperCount: 0,
+                              isNew: true,
+                              isAiSuggested: false,
+                            } as TagOption);
+                          }
+
+                          return filtered;
+                        }}
+                      />
+                    )}
+                  />
+
+                  {/* Info about AI tags in dropdown */}
+                  {suggestedTags.length > 0 && (
+                    <Alert severity="success" sx={{ mt: 2 }}>
+                      <Typography variant="body2">
+                        🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above
+                        (marked with <Chip label="AI" size="small" color="secondary" sx={{ height: 18, fontSize: '0.7rem' }} /> badge).
+                        Confidence: <strong>{Math.round(tagConfidence * 100)}%</strong>
+                      </Typography>
+                    </Alert>
+                  )}
+
+                  {/* Manual trigger button */}
+                  {!isSuggestingTags && suggestedTags.length === 0 && (
+                    <Button
+                      startIcon={<AutoAwesome />}
+                      onClick={handleSuggestTags}
+                      disabled={isSubmitting}
+                      variant="outlined"
+                      size="small"
+                      color="secondary"
+                      sx={{ mt: 1 }}
+                    >
+                      Get AI Tag Suggestions
+                    </Button>
+                  )}
+                </Grid>
+
+                {/* Error Display */}
+                {(createMutation.isError || updateMutation.isError) && (
+                  <Grid item xs={12}>
+                    <Alert severity="error">
+                      {(createMutation.error as any)?.response?.data?.message ||
+                        (updateMutation.error as any)?.response?.data?.message ||
+                        'An error occurred while saving the paper'}
+                    </Alert>
+                  </Grid>
+                )}
+
+                {/* Action Buttons */}
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                    <Button
+                      variant="outlined"
+                      startIcon={<Cancel />}
+                      onClick={() => navigate(isEditMode ? `/papers/${id}` : '/papers')}
+                      disabled={isSubmitting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="contained"
+                      startIcon={isSubmitting ? <CircularProgress size={20} /> : <Save />}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? 'Saving...' : isEditMode ? 'Update Paper' : 'Create Paper'}
+                    </Button>
+                  </Box>
+                </Grid>
               </Grid>
-            </Grid>
-          </Box>
-        </Paper>
-      </Container>
-    </MainLayout>
+            </Box>
+          </Paper>
+        </Container>
+      </MainLayout>
+    </>
+
+
+
   );
 };
 

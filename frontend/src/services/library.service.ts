@@ -1,4 +1,5 @@
 
+import { get } from 'node_modules/axios/index.d.cts';
 import axiosInstance from './api';
 import {
   LibraryItem,
@@ -34,6 +35,11 @@ export const libraryService = {
   getLibrary: async (filters?: { status?: string; favorite?: boolean }): Promise<LibraryItem[]> => {
     const response = await axiosInstance.get<LibraryItem[]>('/library/filter', { params: filters });
     return response.data;
+  },
+
+  getInLibrary: async (paperId: number): Promise<boolean> => {
+    const response = await axiosInstance.get<{ inLibrary: boolean }>(`/library/in-library/${paperId}`);
+    return response.data.inLibrary;
   },
 
   // Get library statistics

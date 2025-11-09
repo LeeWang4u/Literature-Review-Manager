@@ -6,10 +6,12 @@ import { PapersService } from './papers.service';
 import { PapersController } from './papers.controller';
 import { PaperMetadataService } from './paper-metadata.service';
 import { CitationsModule } from '../citations/citations.module';
+import { LibraryService } from '../library/library.service';
+import { LibraryModule } from '../library/library.module';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Paper])
-    ,CitationsModule],
+    ,CitationsModule , LibraryModule],
   providers: [PapersService, PaperMetadataService],
   controllers: [PapersController],
   exports: [PapersService],
