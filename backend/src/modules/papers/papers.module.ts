@@ -11,7 +11,7 @@ import { LibraryModule } from '../library/library.module';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Paper])
-    ,CitationsModule], //LibraryModule],
+    ,CitationsModule , LibraryModule],
   providers: [PapersService, PaperMetadataService],
   controllers: [PapersController],
   exports: [PapersService],

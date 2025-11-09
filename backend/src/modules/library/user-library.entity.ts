@@ -43,7 +43,12 @@ export class UserLibrary {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @ManyToOne(() => Paper, (paper) => paper.inLibraries)
+  // @ManyToOne(() => Paper, (paper) => paper.inLibraries)
+  // @JoinColumn({ name: 'paper_id' })
+  // paper: Paper;
+  @ManyToOne(() => Paper, (paper) => paper.inLibraries, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'paper_id' })
   paper: Paper;
 }

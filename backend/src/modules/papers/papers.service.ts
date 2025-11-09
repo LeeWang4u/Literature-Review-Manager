@@ -19,7 +19,7 @@ export class PapersService {
     @InjectRepository(Citation)
     private paperCitationsRepository: Repository<Citation>,
 
-    // private libraryService: LibraryService,
+    private libraryService: LibraryService,
   ) { }
 
 
@@ -124,11 +124,11 @@ export class PapersService {
       }
     }
 
-    // const addToLibraryDto = {
-    //   paperId: savedPaper.id,
-    // }
+    const addToLibraryDto = {
+      paperId: savedPaper.id,
+    }
 
-    // await this.libraryService.addToLibrary(userId, addToLibraryDto);
+    await this.libraryService.addToLibrary(userId, addToLibraryDto);
 
 
     return {

@@ -108,5 +108,16 @@ export class LibraryController {
     return this.libraryService.getUserLibrary(req.user.id, filters);
   }
 
+  @Get('in-library/:paperId')
+  @ApiOperation({ summary: 'Check if a paper is in user library' })
+  @ApiResponse({ status: 200, description: 'Return whether the paper is in library' })
+  async isInLibrary(
+    @Req() req,
+    @Param('paperId', ParseIntPipe) paperId: number,
+  ): Promise<{ inLibrary: boolean }> {
+    const inLibrary = await this.libraryService.inLibrary(req.user.id, paperId);
+    return { inLibrary };
+  }
+
 
 }
