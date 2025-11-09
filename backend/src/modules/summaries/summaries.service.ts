@@ -37,9 +37,15 @@ export class SummariesService {
       throw new NotFoundException('Paper not found');
     }
 
-    if (!paper.abstract) {
-      throw new BadRequestException('Paper must have an abstract to generate summary');
+    // ✅ Check for fullText first (from PDF), fallback to abstract
+    if (!paper.fullText && !paper.abstract) {
+      throw new BadRequestException('Paper must have content (PDF with extracted text or abstract) to generate summary');
     }
+
+    // Log content source
+    const contentSource = paper.fullText ? 'Full PDF Content' : 'Abstract Only';
+    const contentLength = paper.fullText ? paper.fullText.length : paper.abstract?.length || 0;
+    console.log(`📄 Using ${contentSource} (${contentLength} characters) for summary generation`);
 
     // Check if summary already exists
     const existingSummary = await this.summariesRepository.findOne({
@@ -139,6 +145,26 @@ export class SummariesService {
 
     const model = this.genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
 
+    // ✅ Determine content source: prioritize fullText from PDF
+    const hasFullText = paper.fullText && paper.fullText.length > 0;
+    const contentSource = hasFullText ? 'Full Paper Content (from PDF)' : 'Abstract';
+    
+    // ✅ Use fullText if available, fallback to abstract
+    let paperContent: string;
+    if (hasFullText) {
+      // Smart truncation for very long papers
+      if (paper.fullText.length > 50000) {
+        console.log(`⚠️ Paper very long (${paper.fullText.length} chars), applying smart truncation...`);
+        paperContent = this.truncateContent(paper.fullText, 30000);
+      } else {
+        paperContent = paper.fullText;
+      }
+    } else {
+      paperContent = paper.abstract || 'No content available';
+    }
+
+    console.log(`📄 Using ${contentSource} (${paperContent.length} characters)`);
+
     const prompt = `Analyze this academic paper and provide a comprehensive summary.
 
 Paper Details:
@@ -147,17 +173,21 @@ Paper Details:
 - Year: ${paper.publicationYear || 'N/A'}
 - Journal: ${paper.journal || 'N/A'}
 
-Abstract:
-${paper.abstract}
+Content Source: ${contentSource}
+
+${hasFullText ? '==== FULL PAPER CONTENT ====' : '==== ABSTRACT ===='}
+${paperContent}
+${hasFullText ? '==== END OF FULL PAPER ====' : '==== END OF ABSTRACT ===='}
 
 Please provide:
-1. A concise summary (2-3 paragraphs) that covers:
+1. A ${hasFullText ? 'comprehensive' : 'concise'} summary (${hasFullText ? '4-6 paragraphs' : '2-3 paragraphs'}) that covers:
    - Main research question or objective
-   - Methodology used
-   - Key results and findings
+   - Methodology used ${hasFullText ? '(in detail with algorithms, datasets, experiments)' : ''}
+   - Key results and findings ${hasFullText ? 'with specific numbers and metrics' : ''}
    - Significance and implications
+   ${hasFullText ? '- Limitations and future work' : ''}
 
-2. List ALL key findings from the paper as separate bullet points. Include as many findings as you can identify from the abstract - do not limit to just 3-5 items. Extract every significant finding, result, contribution, and conclusion mentioned.
+2. List ALL key findings from the paper as separate bullet points. ${hasFullText ? 'Extract findings from ALL sections: Introduction, Methodology, Results, Discussion, and Conclusion.' : 'Extract every significant finding from the abstract.'} Include as many findings as you can identify - do not limit to just 3-5 items.
 
 Format your response as JSON:
 {
@@ -405,5 +435,29 @@ Return ONLY a valid JSON object in this exact format (no markdown, no explanatio
       suggested: Array.from(tags).slice(0, 6),
       confidence: 0.6, // Lower confidence for keyword-based
     };
+  }
+
+  /**
+   * Truncate content intelligently for very long papers
+   * Keeps first 60% and last 20% to preserve intro and conclusion
+   */
+  private truncateContent(content: string, maxTokens: number): string {
+    const maxChars = maxTokens * 4; // Estimate 4 chars per token
+    
+    if (content.length <= maxChars) {
+      return content;
+    }
+
+    console.log(`⚠️ Content too long (${content.length} chars), truncating to ${maxChars} chars`);
+
+    // Keep first 60% (introduction, methodology)
+    const introLength = Math.floor(maxChars * 0.6);
+    // Keep last 20% (results, discussion, conclusion)
+    const conclusionLength = maxChars - introLength;
+
+    const intro = content.substring(0, introLength);
+    const conclusion = content.substring(content.length - conclusionLength);
+
+    return `${intro}\n\n[... CONTENT TRUNCATED FOR LENGTH - Middle section omitted ...]\n\n${conclusion}`;
   }
 }
