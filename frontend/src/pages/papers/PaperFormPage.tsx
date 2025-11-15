@@ -50,7 +50,12 @@ interface PaperFormData {
   tags: Tag[];
   references?: {
     title?: string;
+    authors?: string;
+    year?: number;
     doi?: string;
+    citationContext?: string;
+    relevanceScore?: number;
+    isInfluential?: boolean;
   }[];
 }
 
@@ -164,23 +169,24 @@ const PaperFormPage: React.FC = () => {
 
   const createMutation = useMutation({
     mutationFn: (data: CreatePaperData) => paperService.create(data),
-    onSuccess: (response) => {
-      if (response.success === false) {  
-
-        if (response.data?.id) {
-          setExistingPaperId(response.data.id);
-          setOpenDialog(true);
-        }
-        return;
-      }
-      // Phần success
-      toast.success(response.message || 'Paper created successfully!');
+    onSuccess: () => {
+      toast.success('Paper created successfully!');
       queryClient.invalidateQueries({ queryKey: ['papers'] });
       queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
       navigate('/papers');
     },
-    onError: (error: any) => {  // Handle real errors (network, server crash, etc.)
-      toast.error(error.message || 'Failed to create paper');
+    onError: (error: any) => {
+      // Handle 409 Conflict - paper already exists
+      if (error.response?.status === 409) {
+        const existingId = error.response?.data?.data?.id;
+        if (existingId) {
+          setExistingPaperId(existingId);
+          setOpenDialog(true);
+          return;
+        }
+      }
+      // Handle other errors
+      toast.error(error.response?.data?.message || error.message || 'Failed to create paper');
     },
   });
   // Update paper mutation
@@ -200,7 +206,6 @@ const PaperFormPage: React.FC = () => {
   const onSubmit = async (data: PaperFormData) => {
     // First, create any new tags (those with negative IDs)
     const newTags = data.tags.filter((tag) => tag.id < 0);
-    const existingTags = data.tags.filter((tag) => tag.id > 0);
 
     const createdTagIds: number[] = [];
 
@@ -232,11 +237,9 @@ const PaperFormPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
     }
 
-    // Combine existing tag IDs with newly created tag IDs
-    const allTagIds = [
-      ...existingTags.map((tag) => tag.id),
-      ...createdTagIds,
-    ];
+    // Combine existing tag IDs (positive) with newly created tag IDs
+    const existingTagIds = data.tags.filter((tag) => tag.id > 0).map((tag) => tag.id);
+    const allTagIds = [...existingTagIds, ...createdTagIds];
 
     const paperData: CreatePaperData = {
       title: data.title,
@@ -246,12 +249,16 @@ const PaperFormPage: React.FC = () => {
       journal: data.journal || undefined,
       doi: data.doi || undefined,
       url: data.url || undefined,
-      tagIds: data.tags.map((tag) => tag.id),
+      tagIds: allTagIds,
       references: data.references?.map((ref) => ({
         title: ref.title || '',
+        authors: ref.authors || undefined,
+        year: ref.year || undefined,
         doi: ref.doi || undefined,
+        citationContext: ref.citationContext || undefined,
+        relevanceScore: ref.relevanceScore || undefined,
+        isInfluential: ref.isInfluential || false,
       })),
-      // tagIds: allTagIds,
     };
 
     if (isEditMode) {
@@ -321,28 +328,19 @@ const PaperFormPage: React.FC = () => {
     }
   };
 
-  // Auto suggest tags without creating paper (used after metadata extraction)
+  // Auto suggest tags from text without creating paper
   const handleAutoSuggestTags = async (title: string, abstract: string) => {
     if (!title || !abstract) return;
 
     setIsSuggestingTags(true);
 
     try {
-      // Create a temporary paper for tag suggestions
-      const tempPaper = await paperService.create({
+      const result = await summaryService.suggestTagsFromText({
         title: title,
-        authors: control._formValues.authors || 'Unknown',
         abstract: abstract,
-        publicationYear: control._formValues.publicationYear || new Date().getFullYear(),
-        journal: control._formValues.journal || '',
-        doi: control._formValues.doi || '',
-        url: control._formValues.url || '',
-        tagIds: [],
+        authors: control._formValues.authors,
+        keywords: control._formValues.keywords,
       });
-
-      // console.log('Temporary paper created :', tempPaper);
-
-      const result = await summaryService.suggestTags(tempPaper.id);
 
       // Save AI suggested tag names permanently
       const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
@@ -352,11 +350,6 @@ const PaperFormPage: React.FC = () => {
       setSuggestedTags(result.suggested);
       setTagConfidence(result.confidence);
 
-      // Delete the temporary paper
-      // console.log('Deleting temporary paper with ID:', tempPaper.id);
-      // await paperService.delete(tempPaper.data.id);
-      await paperService.delete(tempPaper.id);
-
       toast.success(
         `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
         { duration: 5000 }
@@ -365,6 +358,7 @@ const PaperFormPage: React.FC = () => {
     } catch (error: any) {
       console.error('Error auto-suggesting tags:', error);
       // Fail silently for auto-suggest
+      toast.error('Failed to get AI tag suggestions. You can still add tags manually.');
     } finally {
       setIsSuggestingTags(false);
     }
@@ -392,7 +386,10 @@ const PaperFormPage: React.FC = () => {
         tags: [], // Keep existing selected tags
         references: metadata.references?.map((ref: any) => ({
           title: ref.title || '',
+          authors: ref.authors || '',
+          year: ref.year || undefined,
           doi: ref.doi || '',
+          isInfluential: ref.isInfluential || false,
         })) || [],
       });
 
@@ -514,8 +511,8 @@ const PaperFormPage: React.FC = () => {
           const blob = new Blob([bytes], { type: 'application/pdf' });
 
           // Upload to server
-          await pdfService.uploadBlob(createdPaper.data.id, blob, result.filename);
-          queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.data.id] });
+          await pdfService.uploadBlob(createdPaper.id, blob, result.filename);
+          queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.id] });
 
           toast.success('PDF uploaded successfully!', { id: 'arxiv-upload' });
         } catch (pdfError: any) {
@@ -525,7 +522,7 @@ const PaperFormPage: React.FC = () => {
       }
 
       // Navigate to paper detail page
-      navigate(`/papers/${createdPaper.data.id}`);
+      navigate(`/papers/${createdPaper.id}`);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to save paper');
     }

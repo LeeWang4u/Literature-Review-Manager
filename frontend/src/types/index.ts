@@ -62,7 +62,12 @@ export interface CreatePaperData {
   tagIds?: number[];
   references?: {
     title: string;
+    authors?: string;
+    year?: number;
     doi?: string;
+    citationContext?: string;
+    relevanceScore?: number;
+    isInfluential?: boolean;
   }[];
 }
 
@@ -95,6 +100,13 @@ export interface PaperMetadataResponse {
   arxivId?: string;
   pdfAvailable?: boolean;
   pdfUrl?: string;
+  references?: {
+    title: string;
+    authors?: string;
+    year?: number;
+    doi?: string;
+    isInfluential?: boolean;
+  }[];
 }
 
 // Tag types
@@ -172,12 +184,18 @@ export interface Citation {
   citedPaperId: number;
   citingPaper?: Paper;
   citedPaper?: Paper;
+  citationContext?: string;
+  relevanceScore?: number;
+  isInfluential?: boolean;
   createdAt: string;
 }
 
 export interface CreateCitationData {
   citingPaperId: number;
   citedPaperId: number;
+  citationContext?: string;
+  relevanceScore?: number;
+  isInfluential?: boolean;
 }
 
 export interface CitationNetwork {

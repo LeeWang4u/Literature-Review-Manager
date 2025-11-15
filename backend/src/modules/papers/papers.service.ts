@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { Paper } from './paper.entity';
@@ -9,9 +9,12 @@ import { SearchPaperDto } from './dto/search-paper.dto';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { LibraryService } from '../library/library.service';
+import { CitationsService } from '../citations/citations.service';
 
 @Injectable()
 export class PapersService {
+  private readonly logger = new Logger(PapersService.name);
+  
   constructor(
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
@@ -20,6 +23,7 @@ export class PapersService {
     private paperCitationsRepository: Repository<Citation>,
 
     private libraryService: LibraryService,
+    private citationsService: CitationsService,
   ) { }
 
 
@@ -28,6 +32,16 @@ export class PapersService {
   async create(createPaperDto: CreatePaperDto, userId: number): Promise<{ success: boolean; message: string; data: Paper }> {
     const { tagIds, references, ...paperData } = createPaperDto;
 
+    // Debug: Log references with year data
+    if (references && references.length > 0) {
+      this.logger.log(`Received ${references.length} references from frontend`);
+      this.logger.log(`Sample references (first 3):`);
+      references.slice(0, 3).forEach((ref: any, idx: number) => {
+        this.logger.log(`  Ref ${idx + 1}: title="${ref.title?.substring(0, 40)}...", year=${ref.year}, authors="${ref.authors?.substring(0, 30)}..."`);
+      });
+      const withYear = references.filter((r: any) => r.year).length;
+      this.logger.log(`References with year: ${withYear}/${references.length}`);
+    }
 
     const whereConditions = [];
     if (paperData.doi) {
@@ -71,20 +85,84 @@ export class PapersService {
 
     // Xử lý references (nếu có)
     if (references && references.length > 0) {
+      // Bước 1: Tính priority score cho mỗi reference (không cần AI)
+      const referencesWithScore = references.map(ref => {
+        let score = 0;
+        
+        // Skip invalid references
+        if ((!ref.title || ref.title.trim() === '') && (!ref.doi || ref.doi.trim() === '')) {
+          return { ...ref, priorityScore: 0 };
+        }
+
+        // 1. Citation context quality (0-40 điểm)
+        if (ref.citationContext) {
+          const contextLength = ref.citationContext.length;
+          // Context dài = có nhiều thông tin
+          if (contextLength > 200) score += 40;
+          else if (contextLength > 100) score += 30;
+          else if (contextLength > 50) score += 20;
+          else score += 10;
+
+          // Bonus: có keywords quan trọng
+          const importantKeywords = [
+            'propose', 'demonstrate', 'show', 'prove', 'novel', 'new', 
+            'important', 'significant', 'key', 'fundamental', 'seminal',
+            'state-of-the-art', 'benchmark', 'framework', 'method', 'approach'
+          ];
+          const contextLower = ref.citationContext.toLowerCase();
+          const keywordCount = importantKeywords.filter(kw => contextLower.includes(kw)).length;
+          score += Math.min(keywordCount * 5, 20); // Max +20 điểm
+        }
+
+        // 2. Năm xuất bản (0-30 điểm) - ưu tiên papers gần đây
+        if (ref.year) {
+          const currentYear = new Date().getFullYear();
+          const age = currentYear - ref.year;
+          if (age <= 2) score += 30;        // Very recent
+          else if (age <= 5) score += 25;   // Recent
+          else if (age <= 10) score += 15;  // Moderately recent
+          else if (age <= 20) score += 5;   // Older
+          // Older than 20 years: 0 điểm (unless it's a seminal work)
+        }
+
+        // 3. Có DOI = có thể tải về (0-30 điểm)
+        if (ref.doi && ref.doi.trim() !== '') {
+          score += 30;
+        } else {
+          score += 10; // Still give some points
+        }
+
+        return { ...ref, priorityScore: score };
+      });
+
+      // Bước 2: Sắp xếp theo priority score và chỉ auto-rate top N%
+      const sortedRefs = referencesWithScore
+        .filter(r => r.priorityScore > 0)
+        .sort((a, b) => b.priorityScore - a.priorityScore);
+
+      // Chỉ auto-rate top 50% hoặc tối đa 20 references
+      const topN = Math.min(
+        Math.ceil(sortedRefs.length * 0.5), 
+        20
+      );
+      const refsToAutoRate = new Set(
+        sortedRefs.slice(0, topN).map(r => r.doi || r.title)
+      );
+
+      console.log(`Will auto-rate ${refsToAutoRate.size}/${references.length} references based on priority scores`);
+
+      // Bước 3: Lưu citations và auto-rate selective
       for (const ref of references) {
-        // Bỏ qua những ref không có DOI
-        // if (!ref.doi || ref.doi.trim() === '') continue;
         if ((!ref.title || ref.title.trim() === '') && (!ref.doi || ref.doi.trim() === '')) continue;
 
-        const cleanTitle = ref.title ? ref.title.replace(/\\n/g, '\n') : '';
+        // Clean and truncate title to fit database column (max 500 chars)
+        let cleanTitle = ref.title ? ref.title.replace(/\\n/g, '\n') : '';
+        if (cleanTitle.length > 500) {
+          cleanTitle = cleanTitle.substring(0, 497) + '...';
+        }
         const cleanDoi = ref.doi ? ref.doi.trim() : '';
 
-
         // Kiểm tra xem reference này đã tồn tại chưa (theo DOI)
-        // let refPaper = await this.papersRepository.findOne({
-        //   where: { doi: ref.doi },
-        // });
-        // Chỉ kiểm tra trong DB nếu có DOI
         let refPaper: Paper | null = null;
         if (cleanDoi) {
           refPaper = await this.papersRepository.findOne({
@@ -94,13 +172,48 @@ export class PapersService {
 
         // Nếu chưa có thì thêm mới, đánh dấu là reference
         if (!refPaper) {
+          // Extract year from title if not provided
+          let year: number | null = null;
+          
+          // Try to parse year from ref.year (could be number or string)
+          if (ref.year) {
+            if (typeof ref.year === 'number') {
+              year = ref.year;
+            } else {
+              const yearStr = String(ref.year).trim();
+              if (yearStr !== '') {
+                const parsed = parseInt(yearStr);
+                if (!isNaN(parsed)) {
+                  year = parsed;
+                }
+              }
+            }
+          }
+          
+          // If still no year, extract from title
+          if (!year && ref.title) {
+            const yearMatch = ref.title.match(/\((\d{4})\)/g);
+            if (yearMatch && yearMatch.length > 0) {
+              const lastYear = yearMatch[yearMatch.length - 1];
+              const extractedYear = parseInt(lastYear.replace(/[()]/g, ''));
+              if (extractedYear >= 1900 && extractedYear <= new Date().getFullYear() + 1) {
+                year = extractedYear;
+                this.logger.log(`Extracted year ${year} from title: "${ref.title.substring(0, 60)}..."`);
+              }
+            }
+          }
+          
+          this.logger.log(`Creating new reference paper: ${cleanTitle}, year: ${year}`);
           refPaper = this.papersRepository.create({
             title: cleanTitle || '',
+            authors: ref.authors || '',
+            publicationYear: year,
             doi: ref.doi || '',
             isReference: true,
-            addedBy: userId,  // Optional: Set addedBy cho refPaper nếu cần, giả sử user cũng "add" ref
+            addedBy: userId,
           });
           await this.papersRepository.save(refPaper);
+          this.logger.log(`Reference paper saved with ID: ${refPaper.id}, year: ${refPaper.publicationYear}`);
         }
 
         // Kiểm tra duplicate citation trước khi save
@@ -112,15 +225,25 @@ export class PapersService {
         });
 
         if (!existingCitation) {
-          // Lưu quan hệ trích dẫn
-          await this.paperCitationsRepository.save({
+          // Lưu quan hệ trích dẫn với metadata
+          const newCitation = await this.paperCitationsRepository.save({
             citingPaperId: savedPaper.id,
             citedPaperId: refPaper.id,
-            createdById: userId,  // Sửa: Set createdById required
-            // citationContext: 'some context if available',  // Nếu DTO có, set ở đây; hiện null ok
+            createdById: userId,
+            citationContext: ref.citationContext || null,
+            relevanceScore: ref.relevanceScore || null,
+            isInfluential: ref.isInfluential || false,
           });
+
+          // Chỉ auto-rate nếu reference nằm trong top priority
+          const refIdentifier = ref.doi || ref.title;
+          if (refsToAutoRate.has(refIdentifier)) {
+            // Tự động đánh giá mức độ liên quan bằng AI (chạy async, không chờ)
+            this.citationsService.autoRateRelevance(newCitation.id, userId).catch(err => {
+              console.error(`Failed to auto-rate citation ${newCitation.id}:`, err.message);
+            });
+          }
         }
-        // Nếu duplicate, bỏ qua hoặc log, tùy bạn
       }
     }
 
@@ -204,7 +327,32 @@ export class PapersService {
     });
 
     if (!paper) {
-      throw new NotFoundException(`Paper with ID ${id} not found`);
+      throw new NotFoundException('Paper not found');
+    }
+
+    return paper;
+  }
+
+  async findByDoiOrUrl(doi?: string, url?: string, userId?: number): Promise<Paper> {
+    if (!doi && !url) {
+      throw new NotFoundException('DOI or URL required');
+    }
+
+    const whereConditions = [];
+    if (doi) {
+      whereConditions.push({ doi, addedBy: userId, isReference: false });
+    }
+    if (url) {
+      whereConditions.push({ url, addedBy: userId, isReference: false });
+    }
+
+    const paper = await this.papersRepository.findOne({
+      where: whereConditions,
+      relations: ['tags'],
+    });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
     }
 
     return paper;
@@ -241,6 +389,20 @@ export class PapersService {
     if (paper.addedBy !== userId) {
       throw new ForbiddenException('You can only delete your own papers');
     }
+
+    // Remove from user library first
+    try {
+      await this.libraryService.removeFromLibraryByPaperId(userId, id);
+    } catch (error) {
+      // If not in library, that's fine
+    }
+
+    // Remove all citations (both citing and cited)
+    await this.paperCitationsRepository.delete({ citingPaperId: id });
+    await this.paperCitationsRepository.delete({ citedPaperId: id });
+
+    // TypeORM will handle cascade delete for: notes, pdfFiles, aiSummaries, tags (many-to-many)
+    // because of onDelete: 'CASCADE' in the entity relationships
 
     await this.papersRepository.remove(paper);
   }

@@ -31,19 +31,9 @@ export const paperService = {
   //   return response.data;
   // },
 
-  create: async (data: CreatePaperData): Promise<{ success: boolean; message: string; data?: any }> => {
-    try {
-      const response = await axiosInstance.post('/papers', data);
-      return response.data.data;
-    } catch (error: any) {
-      // Xử lý lỗi từ NestJS
-      const res = error.response?.data;
-      return {
-        success: false,
-        message: res?.message || 'Failed to create paper',
-        data: res?.data,
-      };
-    }
+  create: async (data: CreatePaperData): Promise<Paper> => {
+    const response = await axiosInstance.post<{ success: boolean; message: string; data: Paper }>('/papers', data);
+    return response.data.data;
   },
 
   // Get all papers with search and pagination
@@ -110,7 +100,22 @@ export const paperService = {
     return response.data;
   },
 
-
+  // Find paper by DOI or URL
+  findByDoiOrUrl: async (doi?: string, url?: string): Promise<Paper | null> => {
+    const params = new URLSearchParams();
+    if (doi) params.append('doi', doi);
+    if (url) params.append('url', url);
+    
+    try {
+      const response = await axiosInstance.get<Paper>(`/papers/find?${params.toString()}`);
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
 };
 
 

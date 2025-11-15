@@ -29,4 +29,18 @@ export const summaryService = {
     );
     return response.data;
   },
+
+  // Suggest tags from text without paper ID (for pre-save suggestions)
+  suggestTagsFromText: async (data: {
+    title: string;
+    abstract: string;
+    authors?: string;
+    keywords?: string;
+  }): Promise<{ suggested: string[]; confidence: number }> => {
+    const response = await axiosInstance.post<{ suggested: string[]; confidence: number }>(
+      `/summaries/suggest-tags-from-text`,
+      data
+    );
+    return response.data;
+  },
 };

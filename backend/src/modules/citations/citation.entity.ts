@@ -28,6 +28,12 @@ export class Citation {
   @Column({ name: 'citation_context', type: 'text', nullable: true })
   citationContext: string;
 
+  @Column({ name: 'relevance_score', type: 'decimal', precision: 3, scale: 2, nullable: true })
+  relevanceScore: number;
+
+  @Column({ name: 'is_influential', type: 'boolean', default: false })
+  isInfluential: boolean;
+
   @Column({ name: 'created_by' })
   createdById: number;
 

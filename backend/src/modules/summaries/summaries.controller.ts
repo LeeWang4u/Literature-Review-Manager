@@ -12,6 +12,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SummariesService } from './summaries.service';
 import { GenerateSummaryDto } from './dto/summary.dto';
+import { SuggestTagsFromTextDto } from './dto/suggest-tags-from-text.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('summaries')
@@ -77,5 +78,30 @@ export class SummariesController {
   @ApiResponse({ status: 400, description: 'Invalid request' })
   suggestTags(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
     return this.summariesService.suggestTags(paperId, req.user.id);
+  }
+
+  @Post('suggest-tags-from-text')
+  @ApiOperation({ 
+    summary: 'Suggest tags from text without paper ID',
+    description: 'Generate relevant tag suggestions based on title and abstract directly, without requiring a saved paper. Useful for pre-save tag suggestions.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Tag suggestions generated successfully',
+    schema: {
+      example: {
+        suggested: ['Machine Learning', 'Computer Vision', 'Deep Learning'],
+        confidence: 0.92
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  suggestTagsFromText(@Body() dto: SuggestTagsFromTextDto, @Req() req) {
+    return this.summariesService.suggestTagsFromText(
+      dto.title,
+      dto.abstract,
+      dto.authors,
+      dto.keywords
+    );
   }
 }
