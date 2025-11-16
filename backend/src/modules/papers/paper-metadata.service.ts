@@ -135,24 +135,72 @@ export class PaperMetadataService {
     });
     const xmlData = response.data;
 
-    // Simple XML parsing with regex
-    const titleMatch = xmlData.match(/<title>(.+?)<\/title>/s);
-    const summaryMatch = xmlData.match(/<summary>(.+?)<\/summary>/s);
-    const publishedMatch = xmlData.match(/<published>(\d{4})-/);
-    const authorMatches = xmlData.match(/<name>(.+?)<\/name>/g) || [];
-    const authors = authorMatches.slice(1).map(match => match.replace(/<\/?name>/g, '').trim()).join(', ');
+    // Extract the first <entry> ... </entry> block to avoid feed-level <title>
+    const entryMatch = xmlData.match(/<entry[\s\S]*?<\/entry>/i);
+    const entryXml = entryMatch ? entryMatch[0] : xmlData; // fallback to whole feed if no entry
+
+    const titleMatch = entryXml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const summaryMatch = entryXml.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i);
+    const publishedMatch = entryXml.match(/<published[^>]*>([\s\S]*?)<\/published>/i);
+
+    // Extract all <name> inside this entry (author names)
+    const authorNameMatches = Array.from(entryXml.matchAll(/<author[\s\S]*?>[\s\S]*?<name[^>]*>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi));
+    const authorsArr = authorNameMatches.map(m => m[1].trim()).filter(Boolean);
+    const authors = authorsArr.join(', ');
+
+    // Try to extract pdf link from links inside the entry
+    let pdfUrl = '';
+    const linkMatches = Array.from(entryXml.matchAll(/<link\s+[^>]*\/?>/gi));
+    for (const lm of linkMatches) {
+      const tag = lm[0];
+      const hrefMatch = tag.match(/href=["']?([^"'\s>]+)["']?/i);
+      const typeMatch = tag.match(/type=["']?([^"'\s>]+)["']?/i);
+      const titleAttrMatch = tag.match(/title=["']?([^"'\s>]+)["']?/i);
+      const href = hrefMatch ? hrefMatch[1] : '';
+      const type = typeMatch ? typeMatch[1] : '';
+      const titleAttr = titleAttrMatch ? titleAttrMatch[1] : '';
+      if (type === 'application/pdf' || titleAttr.toLowerCase() === 'pdf') {
+        pdfUrl = href;
+        break;
+      }
+    }
+
+    const title = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : '';
+    const summary = summaryMatch ? summaryMatch[1].replace(/\s+/g, ' ').trim() : '';
+    const published = publishedMatch ? publishedMatch[1].trim() : '';
 
     return {
-      title: titleMatch ? titleMatch[1].trim().replace(/\s+/g, ' ') : '',
+      title,
       authors,
-      abstract: summaryMatch ? summaryMatch[1].trim().replace(/\s+/g, ' ') : '',
-      publicationYear: publishedMatch ? parseInt(publishedMatch[1]) : undefined,
+      abstract: summary,
+      publicationYear: published ? parseInt(published.substring(0, 4), 10) : undefined,
       journal: 'arXiv',
       doi: '',
       url: `https://arxiv.org/abs/${arxivId}`,
       keywords: '',
       references: [],
+      // provide flag for PDF availability
+      ...(pdfUrl ? { pdfAvailable: true } : { pdfAvailable: false }),
     };
+
+    // // Simple XML parsing with regex
+    // const titleMatch = xmlData.match(/<title>(.+?)<\/title>/s);
+    // const summaryMatch = xmlData.match(/<summary>(.+?)<\/summary>/s);
+    // const publishedMatch = xmlData.match(/<published>(\d{4})-/);
+    // const authorMatches = xmlData.match(/<name>(.+?)<\/name>/g) || [];
+    // const authors = authorMatches.slice(1).map(match => match.replace(/<\/?name>/g, '').trim()).join(', ');
+
+    // return {
+    //   title: titleMatch ? titleMatch[1].trim().replace(/\s+/g, ' ') : '',
+    //   authors,
+    //   abstract: summaryMatch ? summaryMatch[1].trim().replace(/\s+/g, ' ') : '',
+    //   publicationYear: publishedMatch ? parseInt(publishedMatch[1]) : undefined,
+    //   journal: 'arXiv',
+    //   doi: '',
+    //   url: `https://arxiv.org/abs/${arxivId}`,
+    //   keywords: '',
+    //   references: [],
+    // };
   }
 
   private async mergeMetadata(sources: Partial<PaperMetadata>[], arxivId: string | null): Promise<PaperMetadata> {

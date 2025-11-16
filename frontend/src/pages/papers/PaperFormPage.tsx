@@ -165,7 +165,7 @@ const PaperFormPage: React.FC = () => {
   const createMutation = useMutation({
     mutationFn: (data: CreatePaperData) => paperService.create(data),
     onSuccess: (response) => {
-      if (response.success === false) {  
+      if (response.success === false) {
 
         if (response.data?.id) {
           setExistingPaperId(response.data.id);
@@ -929,6 +929,9 @@ const PaperFormPage: React.FC = () => {
                           return option.id === value.id;
                         }}
                         renderOption={(props, option) => {
+                          // avoid spreading `key` inside props to prevent React warning
+                          const { key, ...listItemProps } = props as any;
+
                           const isString = typeof option === 'string';
                           const isAiSuggested = !isString && 'isAiSuggested' in option && option.isAiSuggested;
                           const isNew = !isString && 'isNew' in option && option.isNew;
@@ -942,8 +945,9 @@ const PaperFormPage: React.FC = () => {
 
                           return (
                             <Box
+                              key={key}
                               component="li"
-                              {...props}
+                              {...listItemProps}
                               sx={{
                                 display: 'flex !important',
                                 alignItems: 'center',
@@ -999,20 +1003,95 @@ const PaperFormPage: React.FC = () => {
                             </Box>
                           );
                         }}
+                        // renderOption={(props, option) => {
+                        //   const isString = typeof option === 'string';
+                        //   const isAiSuggested = !isString && 'isAiSuggested' in option && option.isAiSuggested;
+                        //   const isNew = !isString && 'isNew' in option && option.isNew;
+                        //   const tagName = isString ? option : option.name;
+                        //   const tagColor = !isString ? option.color : '#1976d2';
+
+                        //   // Check if already selected
+                        //   const isSelected = field.value?.some((v: Tag) =>
+                        //     v.name.toLowerCase() === tagName.toLowerCase()
+                        //   );
+
+                        //   return (
+                        //     <Box
+                        //       component="li"
+                        //       {...props}
+                        //       sx={{
+                        //         display: 'flex !important',
+                        //         alignItems: 'center',
+                        //         gap: 1,
+                        //         opacity: isSelected ? 0.5 : 1,
+                        //         bgcolor: isSelected ? 'action.selected' : 'transparent',
+                        //       }}
+                        //     >
+                        //       {/* Color indicator */}
+                        //       <Box
+                        //         sx={{
+                        //           width: 12,
+                        //           height: 12,
+                        //           borderRadius: '50%',
+                        //           bgcolor: tagColor,
+                        //           flexShrink: 0,
+                        //         }}
+                        //       />
+
+                        //       {/* Tag name */}
+                        //       <Typography sx={{ flexGrow: 1 }}>
+                        //         {tagName}
+                        //       </Typography>
+
+                        //       {/* Badges */}
+                        //       <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        //         {isSelected && (
+                        //           <Chip
+                        //             label="Selected"
+                        //             size="small"
+                        //             color="primary"
+                        //             sx={{ height: 20, fontSize: '0.7rem' }}
+                        //           />
+                        //         )}
+                        //         {isAiSuggested && (
+                        //           <Chip
+                        //             icon={<AutoAwesome sx={{ fontSize: 14 }} />}
+                        //             label="AI"
+                        //             size="small"
+                        //             color="secondary"
+                        //             sx={{ height: 20, fontSize: '0.7rem' }}
+                        //           />
+                        //         )}
+                        //         {isNew && !isAiSuggested && (
+                        //           <Chip
+                        //             label="New"
+                        //             size="small"
+                        //             color="success"
+                        //             sx={{ height: 20, fontSize: '0.7rem' }}
+                        //           />
+                        //         )}
+                        //       </Box>
+                        //     </Box>
+                        //   );
+                        // }}
                         renderInput={(params) => (
                           <TextField
                             {...params}
                             label="Tags"
-                            placeholder={
-                              suggestedTags.length > 0
-                                ? `${suggestedTags.length} AI suggestions available - Select from dropdown or type to create`
-                                : 'Select existing or type to create new tags'
-                            }
-                            helperText={
-                              suggestedTags.length > 0
-                                ? `🤖 ${suggestedTags.length} AI-suggested tags in dropdown (marked with AI badge) • ${Math.round(tagConfidence * 100)}% confidence • New tags will be created when you save the paper`
-                                : 'Select from dropdown or type to create new tags • New tags will be created when you save the paper'
-                            }
+                            // placeholder={
+                            //   suggestedTags.length > 0
+                            //     ? `${suggestedTags.length} AI suggestions available - Select from dropdown or type to create`
+                            //     : 'Select existing or type to create new tags'
+                            // }
+                            // helperText={
+                            //   suggestedTags.length > 0
+                            //     ? `🤖 ${suggestedTags.length} AI-suggested tags in dropdown (marked with AI badge) • ${Math.round(tagConfidence * 100)}% confidence • New tags will be created when you save the paper`
+                            //     : 'Select from dropdown or type to create new tags • New tags will be created when you save the paper'
+                            // }
+
+                            placeholder="Select existing or type to create new tags"
+                            helperText="Select from dropdown or type to create new tags • New tags will be created when you save the paper"
+
                             InputProps={{
                               ...params.InputProps,
                               endAdornment: (
@@ -1098,7 +1177,7 @@ const PaperFormPage: React.FC = () => {
                   />
 
                   {/* Info about AI tags in dropdown */}
-                  {suggestedTags.length > 0 && (
+                  {/* {suggestedTags.length > 0 && (
                     <Alert severity="success" sx={{ mt: 2 }}>
                       <Typography variant="body2">
                         🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above
@@ -1106,7 +1185,7 @@ const PaperFormPage: React.FC = () => {
                         Confidence: <strong>{Math.round(tagConfidence * 100)}%</strong>
                       </Typography>
                     </Alert>
-                  )}
+                  )} */}
 
                   {/* Manual trigger button */}
                   {!isSuggestingTags && suggestedTags.length === 0 && (
