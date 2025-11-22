@@ -58,6 +58,18 @@ export class PapersController {
   async extractMetadata(@Body() dto: ExtractMetadataDto) {
     const metadata = await this.paperMetadataService.extractMetadata(dto.input);
 
+    // Log reference count for debugging
+    console.log(`\n📊 METADATA EXTRACTION RESULT for: ${dto.input}`);
+    console.log(`   Title: ${metadata.title?.substring(0, 60)}...`);
+    console.log(`   References found: ${metadata.references?.length || 0}`);
+    if (metadata.references && metadata.references.length > 0) {
+      console.log(`   First 3 references:`);
+      metadata.references.slice(0, 3).forEach((ref, i) => {
+        console.log(`     ${i + 1}. ${ref.title?.substring(0, 50)}... (${ref.year || 'no year'})`);
+      });
+    }
+    console.log('');
+
     // Check if it's an ArXiv paper and add PDF availability info
     const arxivId = this.paperMetadataService.extractArxivId(dto.input);
 
@@ -200,6 +212,27 @@ export class PapersController {
     return this.citationsService.autoRateAllReferences(id, req.user.id);
   }
 
-  
+  @Post(':id/fetch-nested-references')
+  @ApiOperation({ 
+    summary: 'Manually fetch nested references (references of references)',
+    description: 'Fetch and process references at specified depth level. Useful for manually building multi-level citation networks.'
+  })
+  @ApiResponse({ status: 200, description: 'Nested references fetched successfully' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  async fetchNestedReferences(
+    @Param('id', ParseIntPipe) paperId: number,
+    @Body() body: { depth?: number; maxDepth?: number },
+    @Request() req,
+  ) {
+    const depth = body.depth || 1;
+    const maxDepth = body.maxDepth || 2;
+    
+    return this.papersService.manuallyFetchNestedReferences(
+      paperId, 
+      req.user.id, 
+      depth, 
+      maxDepth
+    );
+  }
 
 }

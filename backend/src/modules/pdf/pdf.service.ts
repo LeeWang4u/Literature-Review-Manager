@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PdfFile } from './pdf-file.entity';
@@ -18,6 +18,7 @@ export class PdfService {
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
     private pdfTextExtractor: PdfTextExtractorService,
+    @Inject(forwardRef(() => PapersService))
     private papersService: PapersService,
   ) {}
 

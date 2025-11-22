@@ -5,6 +5,7 @@
 import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as pdfParse from 'pdf-parse';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export interface PaperMetadata {
   title: string;
@@ -33,6 +34,27 @@ export class PaperMetadataService {
   private readonly crossrefBaseUrl = 'https://api.crossref.org/works';
   private readonly semanticScholarBaseUrl = 'https://api.semanticscholar.org/graph/v1/paper';
   private readonly arxivApiBaseUrl = 'http://export.arxiv.org/api/query';
+  private readonly semanticScholarApiKey = process.env.SEMANTIC_SCHOLAR_API_KEY || '';
+  private genAI: GoogleGenerativeAI;
+  
+  constructor() {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      this.logger.warn('⚠️ GEMINI_API_KEY not configured. AI DOI finding will not work.');
+    } else {
+      this.genAI = new GoogleGenerativeAI(apiKey);
+      this.logger.log('✅ Gemini AI initialized for DOI finding');
+    }
+  }
+  
+  private getSemanticScholarHeaders() {
+    const headers: any = {};
+    if (this.semanticScholarApiKey) {
+      headers['x-api-key'] = this.semanticScholarApiKey;
+      this.logger.debug('Using Semantic Scholar API key');
+    }
+    return headers;
+  }
 
   /**
    * Extract metadata from DOI or URL, fetching from multiple sources and merging results for completeness.
@@ -124,7 +146,10 @@ export class PaperMetadataService {
     const response = await axios.get(`${this.semanticScholarBaseUrl}/${identifier}`, {
       params: { fields },
       timeout: 15000,  // Increased timeout for reference fetching
-      headers: { 'User-Agent': 'LiteratureReviewApp/1.0' },
+      headers: { 
+        'User-Agent': 'LiteratureReviewApp/1.0',
+        ...this.getSemanticScholarHeaders(),
+      },
     });
     return this.mapSemanticScholarToMetadata(response.data);
   }
@@ -521,5 +546,181 @@ export class PaperMetadataService {
     }
 
     return null;
+  }
+
+  /**
+   * Search for a paper by title, authors, and year using Semantic Scholar API
+   */
+  async searchPaperByMetadata(
+    title: string,
+    authors?: string,
+    year?: number,
+    retries: number = 2,
+  ): Promise<{ paperId: string; doi?: string } | null> {
+    this.logger.log(`Searching paper by metadata: "${title.substring(0, 60)}...", year: ${year}`);
+
+    try {
+      // Clean title for search
+      const cleanTitle = title
+        .replace(/[^\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 200);
+
+      const response = await axios.get(`${this.semanticScholarBaseUrl}/search`, {
+        params: {
+          query: cleanTitle,
+          fields: 'paperId,title,authors,year,externalIds',
+          limit: 10,
+        },
+        timeout: 15000,
+        headers: { 
+          'User-Agent': 'LiteratureReviewApp/1.0 (mailto:support@example.com)',
+          ...this.getSemanticScholarHeaders(),
+        },
+      });
+
+      const papers = response.data.data || [];
+      if (papers.length === 0) {
+        this.logger.warn('No papers found in search');
+        return null;
+      }
+
+      // Find best match by comparing title similarity and year
+      let bestMatch = null;
+      let bestScore = 0;
+
+      for (const paper of papers) {
+        let score = 0;
+
+        // Title similarity (simple word matching)
+        const paperTitle = (paper.title || '').toLowerCase();
+        const searchTitle = cleanTitle.toLowerCase();
+        const titleWords = searchTitle.split(' ').filter(w => w.length > 3);
+        const matchedWords = titleWords.filter(word => paperTitle.includes(word));
+        const titleSimilarity = matchedWords.length / titleWords.length;
+        score += titleSimilarity * 70;
+
+        // Year match (if provided)
+        if (year && paper.year) {
+          const yearDiff = Math.abs(paper.year - year);
+          if (yearDiff === 0) score += 30;
+          else if (yearDiff === 1) score += 15;
+        } else if (year) {
+          score += 10; // Penalty for missing year
+        }
+
+        this.logger.debug(`  Paper: "${paper.title?.substring(0, 50)}..." (${paper.year}) - Score: ${score.toFixed(1)}`);
+
+        if (score > bestScore && score > 50) { // Minimum 50% confidence
+          bestScore = score;
+          bestMatch = paper;
+        }
+      }
+
+      if (!bestMatch) {
+        this.logger.warn('No good match found (all scores < 50%)');
+        return null;
+      }
+
+      this.logger.log(`✅ Found match: "${bestMatch.title?.substring(0, 60)}..." (confidence: ${bestScore.toFixed(1)}%)`);
+      return {
+        paperId: bestMatch.paperId,
+        doi: bestMatch.externalIds?.DOI || undefined,
+      };
+    } catch (error) {
+      // Handle rate limiting (429) with retry
+      if (error.response?.status === 429 && retries > 0) {
+        const waitTime = 3000 * (3 - retries); // 3s, 6s
+        this.logger.warn(`Rate limited (429). Retrying in ${waitTime / 1000}s... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        return this.searchPaperByMetadata(title, authors, year, retries - 1);
+      }
+      
+      this.logger.error(`Search failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Get references for a paper using its paperId (from search result)
+   */
+  async getReferencesByPaperId(paperId: string): Promise<PaperMetadata['references']> {
+    this.logger.log(`Fetching references for paperId: ${paperId}`);
+
+    try {
+      const fields = 'references.title,references.authors,references.year,references.externalIds,references.isInfluential';
+      const response = await axios.get(`${this.semanticScholarBaseUrl}/${paperId}`, {
+        params: { fields },
+        timeout: 15000,
+        headers: { 
+          'User-Agent': 'LiteratureReviewApp/1.0 (mailto:support@example.com)',
+          ...this.getSemanticScholarHeaders(),
+        },
+      });
+
+      const refs = response.data.references?.map((ref: any) => ({
+        title: ref.title || '',
+        authors: ref.authors?.map((a: any) => a.name).join(', ') || '',
+        year: ref.year || null,
+        doi: ref.externalIds?.DOI || '',
+        isInfluential: ref.isInfluential || false,
+      })) || [];
+
+      this.logger.log(`✅ Found ${refs.length} references`);
+      return refs;
+    } catch (error) {
+      this.logger.error(`Failed to fetch references by paperId: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Use AI to find DOI based on paper metadata (title, authors, year)
+   * This can help bypass rate limits when Semantic Scholar search is rate-limited
+   */
+  async findDoiWithAI(title: string, authors?: string, year?: number): Promise<string | null> {
+    if (!this.genAI) {
+      this.logger.warn('Gemini AI not initialized');
+      return null;
+    }
+
+    try {
+      this.logger.log(`🤖 Using AI to find DOI for: "${title.substring(0, 50)}..."`);
+
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+      
+      const prompt = `You are a research paper metadata expert. Given the following paper information, find and return ONLY the DOI (Digital Object Identifier) in the exact format "10.xxxx/xxxxx".
+
+Paper Information:
+- Title: ${title}
+${authors ? `- Authors: ${authors}` : ''}
+${year ? `- Publication Year: ${year}` : ''}
+
+Instructions:
+1. Based on the title, authors, and year, identify the correct DOI for this paper
+2. Return ONLY the DOI string in format "10.xxxx/xxxxx" (e.g., "10.1109/CVPR.2016.90")
+3. If you cannot confidently determine the DOI, return "NOT_FOUND"
+4. Do NOT include any explanations, just the DOI or "NOT_FOUND"
+
+DOI:`;
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text().trim();
+      
+      this.logger.log(`AI response: ${response}`);
+
+      // Validate DOI format
+      if (response === 'NOT_FOUND' || !response.match(/^10\.\d{4,}/)) {
+        this.logger.warn('AI could not find valid DOI');
+        return null;
+      }
+
+      this.logger.log(`✅ AI found DOI: ${response}`);
+      return response;
+    } catch (error) {
+      this.logger.error(`AI DOI finding failed: ${error.message}`);
+      return null;
+    }
   }
 }

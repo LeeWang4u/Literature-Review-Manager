@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MulterModule } from '@nestjs/platform-express';
 import { PdfController } from './pdf.controller';
@@ -14,7 +14,7 @@ import { PapersModule } from '../papers/papers.module';
     MulterModule.register({
       dest: './uploads',
     }),
-    PapersModule,
+    forwardRef(() => PapersModule),
   ],
   controllers: [PdfController],
   providers: [PdfService, PdfTextExtractorService],
