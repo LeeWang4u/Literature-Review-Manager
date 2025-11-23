@@ -116,6 +116,19 @@ export const paperService = {
       throw error;
     }
   },
+
+  // Manually fetch nested references
+  fetchNestedReferences: async (
+    paperId: number, 
+    depth: number = 1, 
+    maxDepth: number = 2
+  ): Promise<{ message: string; stats: any }> => {
+    const response = await axiosInstance.post(`/papers/${paperId}/fetch-nested-references`, {
+      depth,
+      maxDepth,
+    });
+    return response.data;
+  },
 };
 
 

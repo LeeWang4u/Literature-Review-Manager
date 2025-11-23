@@ -41,9 +41,11 @@ import {
   Psychology,
   FilterList,
   TrendingUp,
+  OpenInNew,
 } from '@mui/icons-material';
 import * as d3 from 'd3';
 import { citationService } from '@/services/citation.service';
+import { paperService } from '@/services/paper.service';
 import toast from 'react-hot-toast';
 
 interface NodeData {
@@ -51,8 +53,13 @@ interface NodeData {
   title: string;
   year: number;
   authors: string[];
+  doi?: string;
   isInfluential?: boolean;
   relevanceScore?: number;
+  isReference?: boolean;
+  type?: string;
+  networkDepth?: number;
+  citationDepth?: number;
   x?: number;
   y?: number;
   fx?: number | null;
@@ -77,6 +84,13 @@ const CitationNetworkPage: React.FC = () => {
   const analysisLimit = 15;
   const minRelevance = 0.3;
   const [filteredCount, setFilteredCount] = useState({ nodes: 0, edges: 0 });
+
+  // Fetch references of selected node
+  const { data: selectedNodeReferences = [], isLoading: loadingNodeRefs } = useQuery({
+    queryKey: ['citations', 'references', selectedNode?.id],
+    queryFn: () => citationService.getReferences(selectedNode!.id),
+    enabled: !!selectedNode && selectedNode.id !== Number(id),
+  });
 
   const { data: network, isLoading } = useQuery({
     queryKey: ['citationNetwork', id, depth],
@@ -136,15 +150,72 @@ const CitationNetworkPage: React.FC = () => {
     },
   });
 
+  const fetchNestedMutation = useMutation({
+    mutationFn: ({ paperId, depth, maxDepth }: { paperId: number; depth: number; maxDepth: number }) =>
+      paperService.fetchNestedReferences(paperId, depth, maxDepth),
+    onSuccess: (result) => {
+      const method = result.stats.method || 'API';
+      const methodIcon = 
+        method === 'Metadata Search' ? '🔍' : 
+        method === 'AI PDF Extraction' ? '🤖' :
+        method === 'AI DOI Finder + API' ? '🤖🔑' :
+        method === 'DOI API' ? '🔑' : 
+        method.includes('Failed') ? '⏳' : '📡';
+      
+      let message = `${methodIcon} ${result.message}\n`;
+      message += `📊 Found ${result.stats.newReferencesFound} references`;
+      
+      if (result.stats.updatedDoi) {
+        message += `\n✅ Updated DOI: ${result.stats.updatedDoi.substring(0, 30)}...`;
+      }
+
+      toast.success(message, { duration: 5000 });
+      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id] });
+      queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
+      setDrawerOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Failed to fetch nested references');
+    },
+  });
+
   useEffect(() => {
     if (!network || !svgRef.current || !containerRef.current) return;
 
     d3.select(svgRef.current).selectAll('*').remove();
 
-    // Debug: Check year data in network
-    console.log('Network nodes sample (first 3):');
-    network.nodes.slice(0, 3).forEach((node: any) => {
-      console.log(`  Node ${node.id}: title="${node.title?.substring(0, 40)}", year=${node.year}, publicationYear=${node.publicationYear}`);
+    // Debug: Check network data structure
+    console.log('📊 Network Data Analysis:');
+    console.log(`   Total nodes: ${network.nodes.length}`);
+    console.log(`   Total edges: ${network.edges.length}`);
+    console.log('   Node types distribution:');
+    const nodeTypes = network.nodes.reduce((acc: any, node: any) => {
+      const type = node.type || 'unknown';
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {});
+    Object.entries(nodeTypes).forEach(([type, count]) => {
+      console.log(`     ${type}: ${count}`);
+    });
+    
+    console.log('   Network depth distribution:');
+    const depthDist = network.nodes.reduce((acc: any, node: any) => {
+      const depth = node.networkDepth ?? node.citationDepth ?? 0;
+      acc[depth] = (acc[depth] || 0) + 1;
+      return acc;
+    }, {});
+    Object.entries(depthDist).forEach(([depth, count]) => {
+      console.log(`     Depth ${depth}: ${count}`);
+    });
+
+    console.log('\n   Sample nodes (first 5):');
+    network.nodes.slice(0, 5).forEach((node: any) => {
+      console.log(`     [${node.type || 'unknown'}] ${node.id}: "${node.title?.substring(0, 40)}..." year=${node.year} depth=${node.networkDepth ?? node.citationDepth ?? 0}`);
+    });
+    
+    console.log('\n   Sample edges (first 5):');
+    network.edges.slice(0, 5).forEach((edge: any) => {
+      console.log(`     ${edge.source} → ${edge.target} (depth: ${edge.citationDepth})`);
     });
 
     // Filter nodes based on showTopOnly - don't create copies to preserve D3 references
@@ -161,12 +232,37 @@ const CitationNetworkPage: React.FC = () => {
       console.log('Main paper ID:', mainPaperId);
       console.log('Total nodes before filter:', network.nodes.length);
       
-      // Keep main paper + top references only
-      filteredNodes = network.nodes.filter((node: any) => 
-        node.id === mainPaperId || topRefIds.has(node.id)
-      );
+      // Keep main paper + top references + their nested references (depth 2+)
+      filteredNodes = network.nodes.filter((node: any) => {
+        // Always keep main paper
+        if (node.id === mainPaperId) return true;
+        
+        // Keep top references (depth 1)
+        if (topRefIds.has(node.id)) return true;
+        
+        // Keep nested references (depth 2+) that are connected to top references
+        const depth = node.networkDepth ?? node.citationDepth ?? 0;
+        if (depth >= 2) {
+          // Check if this node has edges connecting to any top reference
+          const hasConnectionToTopRef = network.edges.some((edge: any) => {
+            const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+            const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+            
+            // This node is cited by a top reference
+            if (targetId === node.id && topRefIds.has(sourceId)) return true;
+            // This node cites a top reference
+            if (sourceId === node.id && topRefIds.has(targetId)) return true;
+            
+            return false;
+          });
+          
+          return hasConnectionToTopRef;
+        }
+        
+        return false;
+      });
       
-      console.log('Filtered nodes:', filteredNodes.length, filteredNodes.map((n: any) => n.id));
+      console.log('Filtered nodes (with nested):', filteredNodes.length, filteredNodes.map((n: any) => `${n.id}(d${n.networkDepth ?? n.citationDepth ?? 0})`));
       
       const filteredNodeIds = new Set(filteredNodes.map((n: any) => n.id));
       
@@ -370,19 +466,53 @@ const CitationNetworkPage: React.FC = () => {
         return 11;
       })
       .attr('fill', (d: any) => {
+        // Prioritize depth-based coloring for better hierarchy visualization
+        const depth = d.networkDepth ?? d.citationDepth ?? 0;
+        
         if (d.id === Number(id)) return 'url(#current-paper-gradient)';
-        if (d.isInfluential) return 'url(#influential-gradient)';
-        if (d.relevanceScore && d.relevanceScore >= 0.8) return 'url(#high-relevance-gradient)';
-        if (d.relevanceScore && d.relevanceScore >= 0.6) return '#8bc34a';
-        if (d.relevanceScore && d.relevanceScore >= 0.4) return '#42a5f5';
-        if (d.relevanceScore && d.relevanceScore > 0) return '#78909c';
-        return '#90a4ae';
+        
+        // Depth-based colors with influence overlay
+        if (d.isInfluential) {
+          // Influential papers with depth tint
+          if (depth === 0) return 'url(#influential-gradient)';
+          if (depth === 1) return '#FFB300'; // Gold for depth 1 influential
+          if (depth === 2) return '#FFA726'; // Orange for depth 2 influential
+          return '#FF8A65'; // Coral for depth 3+ influential
+        }
+        
+        // Non-influential papers colored by depth
+        if (depth === 0) {
+          // Depth 0: Green shades (direct references)
+          if (d.relevanceScore >= 0.8) return '#4CAF50';
+          if (d.relevanceScore >= 0.6) return '#66BB6A';
+          if (d.relevanceScore >= 0.4) return '#81C784';
+          return '#A5D6A7';
+        } else if (depth === 1) {
+          // Depth 1: Blue shades (references of references)
+          if (d.relevanceScore >= 0.8) return '#2196F3';
+          if (d.relevanceScore >= 0.6) return '#42A5F5';
+          if (d.relevanceScore >= 0.4) return '#64B5F6';
+          return '#90CAF9';
+        } else if (depth === 2) {
+          // Depth 2: Purple shades
+          if (d.relevanceScore >= 0.8) return '#9C27B0';
+          if (d.relevanceScore >= 0.6) return '#AB47BC';
+          if (d.relevanceScore >= 0.4) return '#BA68C8';
+          return '#CE93D8';
+        } else {
+          // Depth 3+: Gray shades
+          return '#90A4AE';
+        }
       })
       .attr('stroke', (d: any) => {
         if (d.id === Number(id)) return '#ff1744';
         if (d.isInfluential) return '#ffb300';
-        if (d.relevanceScore && d.relevanceScore >= 0.7) return '#2e7d32';
-        return '#fff';
+        
+        const depth = d.networkDepth ?? d.citationDepth ?? 0;
+        if (depth === 0) return '#2E7D32'; // Dark green
+        if (depth === 1) return '#1565C0'; // Dark blue
+        if (depth === 2) return '#6A1B9A'; // Dark purple
+        return '#546E7A'; // Dark gray
       })
       .attr('stroke-width', (d: any) => {
         if (d.id === Number(id)) return 4;
@@ -452,9 +582,16 @@ const CitationNetworkPage: React.FC = () => {
     // Enhanced tooltip
     node.append('title')
       .text((d: any) => {
+        const depth = d.networkDepth ?? d.citationDepth ?? 0;
+        const depthLabel = depth === 0 ? 'Direct Reference' : 
+                          depth === 1 ? 'Nested Reference (Lv1)' : 
+                          depth === 2 ? 'Deep Reference (Lv2)' : 
+                          `Very Deep Reference (Lv${depth})`;
+        
         const parts = [
           `📄 ${d.title || 'Untitled'}`,
           '',
+          `🔗 ${depthLabel}`,
           d.year ? `📅 Year: ${d.year}` : '',
           d.authors ? `✍️ Authors: ${typeof d.authors === 'string' ? d.authors.substring(0, 100) : d.authors.slice(0, 3).join(', ')}${typeof d.authors === 'string' && d.authors.length > 100 ? '...' : ''}` : '',
           '',
@@ -609,7 +746,14 @@ const CitationNetworkPage: React.FC = () => {
   return (
     <Container maxWidth="xl">
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={2}>
-        <Typography variant="h4">Citation Network</Typography>
+        <Box>
+          <Typography variant="h4">Citation Network</Typography>
+          {network && network.nodes && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {network.nodes.find((n: any) => n.type === 'main')?.title || 'Loading...'}
+            </Typography>
+          )}
+        </Box>
         
         <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
           <Button
@@ -634,7 +778,23 @@ const CitationNetworkPage: React.FC = () => {
               },
             }}
           >
-            {autoRateAllMutation.isPending ? 'AI Rating...' : 'AI Rate All'}
+            {autoRateAllMutation.isPending ? 'AI Rating...' : '🤖 AI Rate All'}
+          </Button>
+
+          <Button
+            variant="contained"
+            startIcon={fetchNestedMutation.isPending ? <CircularProgress size={20} /> : <AccountTree />}
+            onClick={() => fetchNestedMutation.mutate({ paperId: Number(id), depth: 1, maxDepth: 2 })}
+            disabled={fetchNestedMutation.isPending}
+            sx={{
+              background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+              color: 'white',
+              '&:hover': {
+                background: 'linear-gradient(45deg, #1976D2 30%, #00ACC1 90%)',
+              },
+            }}
+          >
+            {fetchNestedMutation.isPending ? 'Fetching...' : '🔗 Fetch Nested Refs'}
           </Button>
 
           <FormControl size="small" sx={{ minWidth: 120 }}>
@@ -787,38 +947,79 @@ const CitationNetworkPage: React.FC = () => {
             <Typography variant="subtitle2" gutterBottom>
               Legend
             </Typography>
-            <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
+            
+            {/* Depth-based colors */}
+            <Typography variant="caption" color="textSecondary" gutterBottom display="block">
+              Citation Depth:
+            </Typography>
+            <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap mb={2}>
               <Box display="flex" alignItems="center" gap={1}>
                 <Circle sx={{ color: '#dc004e', fontSize: 22 }} />
-                <Typography variant="body2">Current Paper</Typography>
+                <Typography variant="body2">Main Paper</Typography>
               </Box>
               <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#ffd700', fontSize: 20, filter: 'drop-shadow(0 0 3px #ff8c00)' }} />
-                <Typography variant="body2">Influential ⭐</Typography>
+                <Circle sx={{ color: '#4CAF50', fontSize: 18 }} />
+                <Typography variant="body2">Depth 0 (Direct)</Typography>
               </Box>
               <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#4caf50', fontSize: 18 }} />
-                <Typography variant="body2">High (&gt;80%)</Typography>
+                <Circle sx={{ color: '#2196F3', fontSize: 18 }} />
+                <Typography variant="body2">Depth 1 (Nested)</Typography>
               </Box>
               <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#8bc34a', fontSize: 18 }} />
-                <Typography variant="body2">Good (60-80%)</Typography>
+                <Circle sx={{ color: '#9C27B0', fontSize: 18 }} />
+                <Typography variant="body2">Depth 2 (Deep)</Typography>
               </Box>
               <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#ffc107', fontSize: 18 }} />
-                <Typography variant="body2">Medium (40-60%)</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#ff9800', fontSize: 18 }} />
-                <Typography variant="body2">Low (&lt;40%)</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#1976d2', fontSize: 16 }} />
-                <Typography variant="body2">Not Rated</Typography>
+                <Circle sx={{ color: '#90A4AE', fontSize: 16 }} />
+                <Typography variant="body2">Depth 3+</Typography>
               </Box>
             </Stack>
+
+            {/* Relevance scores */}
+            <Typography variant="caption" color="textSecondary" gutterBottom display="block">
+              Relevance (darker = higher score):
+            </Typography>
+            <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap mb={2}>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Circle sx={{ color: '#ffd700', fontSize: 20, filter: 'drop-shadow(0 0 3px #ff8c00)' }} />
+                <Typography variant="body2">⭐ Influential</Typography>
+              </Box>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Circle sx={{ fontSize: 18 }}>
+                  <svg width="18" height="18">
+                    <circle cx="9" cy="9" r="8" fill="#4caf50" />
+                  </svg>
+                </Circle>
+                <Typography variant="body2">80-100%</Typography>
+              </Box>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Circle sx={{ fontSize: 18 }}>
+                  <svg width="18" height="18">
+                    <circle cx="9" cy="9" r="8" fill="#66BB6A" />
+                  </svg>
+                </Circle>
+                <Typography variant="body2">60-80%</Typography>
+              </Box>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Circle sx={{ fontSize: 18 }}>
+                  <svg width="18" height="18">
+                    <circle cx="9" cy="9" r="8" fill="#81C784" />
+                  </svg>
+                </Circle>
+                <Typography variant="body2">40-60%</Typography>
+              </Box>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Circle sx={{ fontSize: 18 }}>
+                  <svg width="18" height="18">
+                    <circle cx="9" cy="9" r="8" fill="#A5D6A7" />
+                  </svg>
+                </Circle>
+                <Typography variant="body2">&lt;40%</Typography>
+              </Box>
+            </Stack>
+
             <Alert severity="info" sx={{ mt: 2 }}>
-              <strong>Tip:</strong> Click papers to rate relevance • Drag to rearrange • Scroll to zoom • Hover to see details
+              <strong>Tip:</strong> Click papers to rate • Drag to rearrange • Scroll to zoom • Use "Fetch Nested Refs" to load deeper levels
             </Alert>
           </Paper>
         </Paper>
@@ -827,6 +1028,11 @@ const CitationNetworkPage: React.FC = () => {
         anchor="right"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
+        disableRestoreFocus
+        ModalProps={{
+          keepMounted: false,
+          disableRestoreFocus: true,
+        }}
         sx={{
           '& .MuiDrawer-paper': {
             width: { xs: '100%', sm: 450 },
@@ -860,14 +1066,107 @@ const CitationNetworkPage: React.FC = () => {
                   {selectedNode.authors}
                 </Typography>
 
+                {(() => {
+                  // Find citation context from references
+                  const citation = references.find(
+                    r => r.citedPaper?.id === selectedNode.id
+                  );
+                  return citation?.citationContext ? (
+                    <>
+                      <Typography variant="subtitle2" color="textSecondary" gutterBottom sx={{ mt: 2 }}>
+                        📝 Citation Context / Note
+                      </Typography>
+                      <Typography 
+                        variant="body2" 
+                        gutterBottom
+                        sx={{
+                          p: 1.5,
+                          bgcolor: 'rgba(25, 118, 210, 0.08)',
+                          borderLeft: '3px solid #1976d2',
+                          borderRadius: 1,
+                          fontStyle: 'italic',
+                        }}
+                      >
+                        {citation.citationContext}
+                      </Typography>
+                    </>
+                  ) : null;
+                })()}
+
                 <Box display="flex" gap={2} mt={2}>
+                  <Box flex={1}>
+                    <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                      Citation Depth
+                    </Typography>
+                    <Chip 
+                      label={(() => {
+                        const depth = selectedNode.networkDepth ?? selectedNode.citationDepth ?? 0;
+                        if (depth === 0) return 'Direct Reference';
+                        if (depth === 1) return 'Nested (Level 1)';
+                        if (depth === 2) return 'Deep (Level 2)';
+                        return `Very Deep (Level ${depth})`;
+                      })()}
+                      size="small"
+                      color={(() => {
+                        const depth = selectedNode.networkDepth ?? selectedNode.citationDepth ?? 0;
+                        if (depth === 0) return 'success';
+                        if (depth === 1) return 'info';
+                        if (depth === 2) return 'secondary';
+                        return 'default';
+                      })()}
+                    />
+                  </Box>
+                  
                   <Box flex={1}>
                     <Typography variant="subtitle2" color="textSecondary" gutterBottom>
                       Year
                     </Typography>
                     <Typography variant="body2">{selectedNode.year || 'N/A'}</Typography>
                   </Box>
-                  
+                </Box>
+
+                {/* DOI Information */}
+                {selectedNode.doi && (
+                  <Box mt={2}>
+                    <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                      🔑 DOI
+                    </Typography>
+                    <Box 
+                      sx={{ 
+                        p: 1, 
+                        bgcolor: 'rgba(76, 175, 80, 0.08)',
+                        borderRadius: 1,
+                        border: '1px solid rgba(76, 175, 80, 0.3)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                      }}
+                    >
+                      <Typography 
+                        variant="body2" 
+                        sx={{ 
+                          fontFamily: 'monospace',
+                          fontSize: '0.85rem',
+                          wordBreak: 'break-all',
+                          flex: 1,
+                        }}
+                      >
+                        {selectedNode.doi}
+                      </Typography>
+                      <IconButton 
+                        size="small"
+                        onClick={() => {
+                          window.open(`https://doi.org/${selectedNode.doi}`, '_blank');
+                        }}
+                        title="Open DOI link"
+                      >
+                        <OpenInNew fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </Box>
+                )}
+
+                <Box display="flex" gap={2} mt={2}>
                   <Box flex={1}>
                     <Typography variant="subtitle2" color="textSecondary" gutterBottom>
                       Relevance Score
@@ -945,6 +1244,29 @@ const CitationNetworkPage: React.FC = () => {
                     }}
                   >
                     View Citation Network
+                  </Button>
+
+                  <Button
+                    variant="contained"
+                    fullWidth
+                    startIcon={fetchNestedMutation.isPending ? <CircularProgress size={20} /> : <AccountTree />}
+                    onClick={() => {
+                      fetchNestedMutation.mutate({ 
+                        paperId: selectedNode.id, 
+                        depth: 1, 
+                        maxDepth: 2 
+                      });
+                    }}
+                    disabled={fetchNestedMutation.isPending}
+                    sx={{
+                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                      color: 'white',
+                      '&:hover': {
+                        background: 'linear-gradient(45deg, #1976D2 30%, #00ACC1 90%)',
+                      },
+                    }}
+                  >
+                    {fetchNestedMutation.isPending ? 'Fetching...' : '🔗 Fetch References of This Paper'}
                   </Button>
 
                   <Divider sx={{ my: 2 }} />
@@ -1093,6 +1415,149 @@ const CitationNetworkPage: React.FC = () => {
                 </>
               )}
             </Stack>
+
+            {/* 📚 References of this node (citations of citation) */}
+            {selectedNode && selectedNode.id !== Number(id) && (
+              <>
+                <Divider sx={{ my: 3 }} />
+                
+                <Box>
+                  <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    📚 References of this Paper
+                    {loadingNodeRefs && <CircularProgress size={20} />}
+                  </Typography>
+                  
+                  {loadingNodeRefs ? (
+                    <Box display="flex" justifyContent="center" py={3}>
+                      <CircularProgress />
+                    </Box>
+                  ) : selectedNodeReferences.length > 0 ? (
+                    <>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        This paper cites {selectedNodeReferences.length} other paper(s):
+                      </Typography>
+                      
+                      <Stack spacing={1.5} mt={2}>
+                        {selectedNodeReferences.slice(0, 10).map((ref: any) => (
+                          <Card 
+                            key={ref.id} 
+                            variant="outlined" 
+                            sx={{ 
+                              cursor: 'pointer',
+                              transition: 'all 0.2s',
+                              '&:hover': {
+                                boxShadow: 2,
+                                borderColor: 'primary.main',
+                              }
+                            }}
+                            onClick={() => {
+                              if (ref.citedPaper) {
+                                setSelectedNode(ref.citedPaper);
+                              }
+                            }}
+                          >
+                            <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                              <Box display="flex" alignItems="start" gap={1}>
+                                <Circle sx={{ fontSize: 8, mt: 1, color: 'primary.main' }} />
+                                <Box flex={1}>
+                                  <Typography variant="body2" fontWeight="medium" gutterBottom>
+                                    {ref.citedPaper?.title || 'Unknown Title'}
+                                  </Typography>
+                                  
+                                  <Box display="flex" gap={1} flexWrap="wrap" mt={0.5}>
+                                    {ref.citedPaper?.year && (
+                                      <Chip 
+                                        label={ref.citedPaper.year} 
+                                        size="small" 
+                                        variant="outlined"
+                                        sx={{ height: 20, fontSize: '0.7rem' }}
+                                      />
+                                    )}
+                                    
+                                    {ref.relevanceScore && (
+                                      <Chip 
+                                        label={`${(ref.relevanceScore * 100).toFixed(0)}%`}
+                                        size="small"
+                                        sx={{
+                                          height: 20,
+                                          fontSize: '0.7rem',
+                                          bgcolor: ref.relevanceScore >= 0.7 ? '#4caf50' : 
+                                                   ref.relevanceScore >= 0.5 ? '#8bc34a' : '#ffc107',
+                                          color: '#fff',
+                                        }}
+                                      />
+                                    )}
+                                    
+                                    {ref.isInfluential && (
+                                      <Chip 
+                                        label="⭐ Influential"
+                                        size="small"
+                                        sx={{
+                                          height: 20,
+                                          fontSize: '0.7rem',
+                                          bgcolor: '#ffd700',
+                                          color: '#000',
+                                        }}
+                                      />
+                                    )}
+                                  </Box>
+                                  
+                                  {ref.citationContext && (
+                                    <Typography 
+                                      variant="caption" 
+                                      color="text.secondary" 
+                                      sx={{ 
+                                        display: '-webkit-box',
+                                        WebkitLineClamp: 2,
+                                        WebkitBoxOrient: 'vertical',
+                                        overflow: 'hidden',
+                                        mt: 0.5,
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      "{ref.citationContext}"
+                                    </Typography>
+                                  )}
+                                </Box>
+                              </Box>
+                            </CardContent>
+                          </Card>
+                        ))}
+                        
+                        {selectedNodeReferences.length > 10 && (
+                          <Typography variant="caption" color="text.secondary" textAlign="center">
+                            ... and {selectedNodeReferences.length - 10} more references
+                          </Typography>
+                        )}
+                      </Stack>
+                      
+                      <Button
+                        variant="outlined"
+                        fullWidth
+                        size="small"
+                        startIcon={<AccountTree />}
+                        onClick={() => {
+                          navigate(`/citations/${selectedNode.id}`);
+                          setDrawerOpen(false);
+                        }}
+                        sx={{ mt: 2 }}
+                      >
+                        View Full Citation Network of This Paper
+                      </Button>
+                    </>
+                  ) : (
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                      No references found for this paper. 
+                      {selectedNode.isReference && (
+                        <Typography variant="caption" display="block" mt={1}>
+                          This is a reference paper. References will be automatically fetched if this paper has high priority.
+                        </Typography>
+                      )}
+                    </Alert>
+                  )}
+                </Box>
+              </>
+            )}
           </Box>
         )}
       </Drawer>

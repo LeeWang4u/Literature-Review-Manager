@@ -101,12 +101,17 @@ export class CitationsService {
   }
 
   async getCitationNetwork(paperId: number, userId: number, depth: number = 2) {
-    // Verify paper belongs to user
+    // Verify paper exists and user has access (either owns it or it's a reference)
     const rootPaper = await this.papersRepository.findOne({
-      where: { id: paperId, addedBy: userId },
+      where: { id: paperId },
     });
 
     if (!rootPaper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    // If paper is not a reference, verify ownership
+    if (!rootPaper.isReference && rootPaper.addedBy !== userId) {
       throw new NotFoundException('Paper not found');
     }
 
@@ -114,13 +119,20 @@ export class CitationsService {
     const nodes = [];
     const edges = [];
     const nodeMetadata = new Map<number, any>();
+    const nodeDepths = new Map<number, number>();
 
-    const traverse = async (currentPaperId: number, currentDepth: number) => {
+    const traverse = async (currentPaperId: number, currentDepth: number, isMainPaper: boolean = false) => {
       if (currentDepth > depth || visited.has(currentPaperId)) {
         return;
       }
 
       visited.add(currentPaperId);
+      
+      // Track the minimum depth at which this node appears
+      const existingDepth = nodeDepths.get(currentPaperId);
+      if (existingDepth === undefined || currentDepth < existingDepth) {
+        nodeDepths.set(currentPaperId, currentDepth);
+      }
 
       const paper = await this.papersRepository.findOne({
         where: { id: currentPaperId },
@@ -128,24 +140,36 @@ export class CitationsService {
 
       if (!paper) return;
 
-      // Get all citations for this paper (regardless of who created them)
-      const citations = await this.citationsRepository.find({
-        where: [
-          { citingPaperId: currentPaperId },
-          { citedPaperId: currentPaperId },
-        ],
+      // Get all citations WHERE THIS PAPER IS CITING others (outgoing)
+      const citationsOut = await this.citationsRepository.find({
+        where: { citingPaperId: currentPaperId },
       });
+
+      // Get all citations WHERE THIS PAPER IS CITED by others (incoming)
+      const citationsIn = await this.citationsRepository.find({
+        where: { citedPaperId: currentPaperId },
+      });
+
+      const allCitations = [...citationsOut, ...citationsIn];
 
       // Aggregate metadata for this node from all its citations
       let maxRelevance = 0;
       let isInfluential = false;
+      let maxParsingConfidence = 0;
+      let citationDepthValue = 0;
 
-      for (const citation of citations) {
+      for (const citation of allCitations) {
         if (citation.relevanceScore && citation.relevanceScore > maxRelevance) {
           maxRelevance = citation.relevanceScore;
         }
         if (citation.isInfluential) {
           isInfluential = true;
+        }
+        if (citation.parsingConfidence && citation.parsingConfidence > maxParsingConfidence) {
+          maxParsingConfidence = citation.parsingConfidence;
+        }
+        if (citation.citationDepth !== null && citation.citationDepth !== undefined) {
+          citationDepthValue = Math.max(citationDepthValue, citation.citationDepth);
         }
 
         edges.push({
@@ -154,44 +178,120 @@ export class CitationsService {
           relevanceScore: citation.relevanceScore,
           isInfluential: citation.isInfluential,
           citationContext: citation.citationContext,
+          citationDepth: citation.citationDepth,
+          parsingConfidence: citation.parsingConfidence,
+          parsedAuthors: citation.parsedAuthors,
+          parsedTitle: citation.parsedTitle,
+          parsedYear: citation.parsedYear,
         });
-
-        // Traverse connected papers
-        if (citation.citingPaperId === currentPaperId) {
-          await traverse(citation.citedPaperId, currentDepth + 1);
-        } else {
-          await traverse(citation.citingPaperId, currentDepth + 1);
-        }
       }
 
       nodeMetadata.set(currentPaperId, {
         relevanceScore: maxRelevance || undefined,
         isInfluential: isInfluential || undefined,
+        parsingConfidence: maxParsingConfidence || undefined,
+        citationDepth: citationDepthValue,
+        isReference: paper.isReference,
       });
+
+      // Traverse outgoing citations (papers this paper cites)
+      for (const citation of citationsOut) {
+        await traverse(citation.citedPaperId, currentDepth + 1, false);
+      }
+
+      // For the main paper, also traverse incoming citations
+      if (isMainPaper) {
+        for (const citation of citationsIn) {
+          await traverse(citation.citingPaperId, currentDepth + 1, false);
+        }
+      }
     };
 
-    await traverse(paperId, 0);
+    await traverse(paperId, 0, true);
 
     // Build nodes with metadata
-    for (const paperId of visited) {
+    for (const nodeId of visited) {
       const paper = await this.papersRepository.findOne({
-        where: { id: paperId },
+        where: { id: nodeId },
       });
 
       if (paper) {
-        const metadata = nodeMetadata.get(paperId) || {};
+        const metadata = nodeMetadata.get(nodeId) || {};
+        const nodeDepth = nodeDepths.get(nodeId) || 0;
+        
         nodes.push({
           id: paper.id,
           title: paper.title,
           year: paper.publicationYear,
           authors: paper.authors,
+          abstract: paper.abstract,
+          doi: paper.doi,
+          url: paper.url,
+          isReference: paper.isReference,
           relevanceScore: metadata.relevanceScore,
           isInfluential: metadata.isInfluential,
+          parsingConfidence: metadata.parsingConfidence,
+          citationDepth: metadata.citationDepth,
+          networkDepth: nodeDepth,
+          type: nodeId === paperId ? 'main' : (nodeDepth === 1 ? 'reference' : 'nested-reference'),
         });
       }
     }
 
+    console.log(`\n📊 Citation Network Stats for paper ${paperId}:`);
+    console.log(`   Total nodes: ${nodes.length}`);
+    console.log(`   Total edges: ${edges.length}`);
+    console.log(`   Depth 0 (main): ${nodes.filter(n => n.networkDepth === 0).length}`);
+    console.log(`   Depth 1 (direct refs): ${nodes.filter(n => n.networkDepth === 1).length}`);
+    console.log(`   Depth 2 (nested refs): ${nodes.filter(n => n.networkDepth === 2).length}`);
+    console.log(`   Depth 3+ (deep refs): ${nodes.filter(n => n.networkDepth >= 3).length}`);
+    console.log('');
+
     return { nodes, edges };
+  }
+
+  async debugCitations(paperId: number) {
+    // Get all citations without auth check
+    const citationsOut = await this.citationsRepository.find({
+      where: { citingPaperId: paperId },
+      relations: ['citingPaper', 'citedPaper', 'createdBy'],
+    });
+
+    const citationsIn = await this.citationsRepository.find({
+      where: { citedPaperId: paperId },
+      relations: ['citingPaper', 'citedPaper', 'createdBy'],
+    });
+
+    const paper = await this.papersRepository.findOne({
+      where: { id: paperId },
+    });
+
+    return {
+      paper: paper ? { id: paper.id, title: paper.title, isReference: paper.isReference } : null,
+      citationsCount: citationsOut.length + citationsIn.length,
+      citingThisPaper: citationsOut.length,
+      citedByThisPaper: citationsIn.length,
+      citationsOut: citationsOut.map(c => ({
+        id: c.id,
+        citingId: c.citingPaperId,
+        citingTitle: c.citingPaper?.title,
+        citedId: c.citedPaperId,
+        citedTitle: c.citedPaper?.title,
+        createdBy: c.createdBy?.id,
+        relevanceScore: c.relevanceScore,
+        isInfluential: c.isInfluential,
+      })),
+      citationsIn: citationsIn.map(c => ({
+        id: c.id,
+        citingId: c.citingPaperId,
+        citingTitle: c.citingPaper?.title,
+        citedId: c.citedPaperId,
+        citedTitle: c.citedPaper?.title,
+        createdBy: c.createdBy?.id,
+        relevanceScore: c.relevanceScore,
+        isInfluential: c.isInfluential,
+      })),
+    };
   }
 
   async getCitationStats(paperId: number, userId: number) {
@@ -337,6 +437,37 @@ export class CitationsService {
     const citingContent = this.truncateContent(citing.abstract || citing.fullText || 'No content available', 2000);
     const citedContent = this.truncateContent(cited.abstract || cited.fullText || 'No content available', 2000);
 
+    // Calculate recency score (papers from recent years are more relevant)
+    const currentYear = new Date().getFullYear();
+    const citedYear = cited.publicationYear || 2000;
+    const yearDiff = currentYear - citedYear;
+    const recencyNote = yearDiff <= 3 ? 'very recent' : yearDiff <= 5 ? 'recent' : yearDiff <= 10 ? 'moderately old' : 'older';
+
+    // Count citation mentions in fullText if available
+    let citationFrequency = 0;
+    let citationLocations = '';
+    if (citing.fullText && cited.authors) {
+      const firstAuthor = cited.authors.split(',')[0].trim().split(' ').pop(); // Get last name of first author
+      if (firstAuthor) {
+        const mentions = citing.fullText.match(new RegExp(firstAuthor, 'gi')) || [];
+        citationFrequency = mentions.length;
+      }
+      
+      // Detect location: intro, methods, results, discussion
+      const text = citing.fullText.toLowerCase();
+      const introSection = text.substring(0, Math.floor(text.length * 0.25));
+      const methodsSection = text.substring(Math.floor(text.length * 0.25), Math.floor(text.length * 0.5));
+      const resultsSection = text.substring(Math.floor(text.length * 0.5), Math.floor(text.length * 0.75));
+      const discussionSection = text.substring(Math.floor(text.length * 0.75));
+      
+      const locations = [];
+      if (firstAuthor && introSection.includes(firstAuthor.toLowerCase())) locations.push('Introduction');
+      if (firstAuthor && methodsSection.includes(firstAuthor.toLowerCase())) locations.push('Methods');
+      if (firstAuthor && resultsSection.includes(firstAuthor.toLowerCase())) locations.push('Results');
+      if (firstAuthor && discussionSection.includes(firstAuthor.toLowerCase())) locations.push('Discussion');
+      citationLocations = locations.join(', ') || 'Unknown';
+    }
+
     const prompt = `You are a research paper relevance analyzer. Analyze the relationship between two academic papers and provide a relevance score.
 
 CITING PAPER (Main Paper):
@@ -348,29 +479,42 @@ Abstract/Content: ${citingContent}
 CITED PAPER (Reference):
 Title: ${cited.title}
 Authors: ${cited.authors}
-Year: ${cited.publicationYear}
+Year: ${cited.publicationYear} (${recencyNote} - published ${currentYear - citedYear} years ago)
 Abstract/Content: ${citedContent}
 
+CITATION METRICS:
+- Frequency: Cited ${citationFrequency} time(s) in the paper${citationFrequency > 0 ? ` (${citationFrequency > 5 ? 'frequently cited' : citationFrequency > 2 ? 'multiple citations' : 'limited citations'})` : ''}
+- Location: ${citationLocations || 'Not detected'}${citationLocations.includes('Introduction') ? ' (cited in intro suggests foundational importance)' : ''}${citationLocations.includes('Methods') ? ' (cited in methods suggests methodological relevance)' : ''}
+${citation.citationContext ? `- Existing Context: "${citation.citationContext}"\n` : ''}
 TASK: Evaluate how relevant and important the CITED paper is to the CITING paper's research.
 
 Consider:
-1. Topic overlap and research domain similarity
-2. Methodological connections
-3. Whether the cited paper provides foundational concepts, methods, or data
-4. The cited paper's contribution to the citing paper's arguments or findings
-5. Whether this is a key/influential reference or just a passing mention
+1. **Topic overlap and research domain similarity**
+2. **Methodological connections**
+3. **Whether the cited paper provides foundational concepts, methods, or data**
+4. **The cited paper's contribution to the citing paper's arguments or findings**
+5. **Whether this is a key/influential reference or just a passing mention**
+6. **Citation frequency** - Papers cited multiple times are usually more important
+7. **Citation location** - Citations in Introduction/Methods are typically more foundational than those in Discussion
+8. **Recency** - More recent papers (≤5 years) may be more relevant for current research trends
+9. **Existing citation context** - If already documented, respect the established relationship
+
+SCORING GUIDELINES:
+- 0.8-1.0: Critical reference (foundational work, cited frequently, in key sections, high methodological relevance)
+- 0.6-0.8: High relevance (important contribution, cited multiple times or in important sections)
+- 0.3-0.6: Medium relevance (useful reference, cited once or briefly mentioned)
+- 0.0-0.3: Low relevance (tangential mention, outdated, or minimal contribution)
 
 Respond in EXACTLY this JSON format (no additional text):
 {
   "relevanceScore": <number between 0.0 and 1.0>,
   "isInfluential": <boolean>,
-  "reasoning": "<2-3 sentence explanation>",
+  "reasoning": "<2-3 sentence explanation considering frequency, location, recency, and content>",
   "suggestedContext": "<brief note about how this reference relates to the main paper>"
 }
 
 Where:
-- relevanceScore: 0.0-0.3 (low), 0.3-0.6 (medium), 0.6-0.8 (high), 0.8-1.0 (critical)
-- isInfluential: true if this is a foundational/key reference, false otherwise`;
+- isInfluential: true if this is a foundational/key reference (cited frequently, in intro/methods, or methodologically critical), false otherwise`;
 
     try {
       const result = await this.model.generateContent(prompt);

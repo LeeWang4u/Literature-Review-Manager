@@ -146,7 +146,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           variant="temporary"
           open={mobileOpen}
           onClose={handleDrawerToggle}
-          ModalProps={{ keepMounted: true }}
+          ModalProps={{ 
+            keepMounted: true,
+            disableRestoreFocus: true,
+          }}
           sx={{
             display: { xs: 'block', sm: 'none' },
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },

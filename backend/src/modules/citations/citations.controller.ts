@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { CitationsService } from './citations.service';
+import { CitationParserService } from './citation-parser.service';
 import { CreateCitationDto } from './dto/citation.dto';
 import { UpdateCitationDto } from './dto/update-citation.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -23,7 +24,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('citations')
 export class CitationsController {
-  constructor(private readonly citationsService: CitationsService) {}
+  constructor(
+    private readonly citationsService: CitationsService,
+    private readonly citationParserService: CitationParserService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a citation relationship' })
@@ -124,5 +128,33 @@ export class CitationsController {
     @Query('minRelevance', new DefaultValuePipe(0.5)) minRelevance: number,
   ) {
     return this.citationsService.analyzeReferences(paperId, req.user.id, { limit, minRelevance });
+  }
+
+  @Get('debug/paper/:paperId')
+  @ApiOperation({ summary: 'Debug: Get raw citation data for a paper' })
+  @ApiResponse({ status: 200, description: 'Return raw citation data' })
+  async debugCitations(@Param('paperId', ParseIntPipe) paperId: number) {
+    return this.citationsService.debugCitations(paperId);
+  }
+
+  @Post('test-parser')
+  @ApiOperation({ summary: 'Test AI citation parser with sample citation strings' })
+  @ApiResponse({ status: 200, description: 'Parsing results returned' })
+  async testParser(@Body() body: { citations: string[] }) {
+    const results = await this.citationParserService.parseCitations(body.citations);
+    return {
+      success: true,
+      count: results.length,
+      results: results.map(r => ({
+        rawCitation: r.rawCitation,
+        parsed: {
+          authors: r.authors,
+          year: r.year,
+          title: r.title,
+          doi: r.doi,
+          confidence: r.confidence,
+        },
+      })),
+    };
   }
 }

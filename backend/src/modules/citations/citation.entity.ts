@@ -37,6 +37,28 @@ export class Citation {
   @Column({ name: 'created_by' })
   createdById: number;
 
+  // Hierarchical citation support
+  @Column({ name: 'citation_depth', type: 'int', default: 0 })
+  citationDepth: number; // 0 = direct citation, 1 = citation of citation, etc.
+
+  @Column({ name: 'parsed_authors', type: 'text', nullable: true })
+  parsedAuthors: string; // AI-parsed author names
+
+  @Column({ name: 'parsed_title', type: 'text', nullable: true })
+  parsedTitle: string; // AI-parsed clean title
+
+  @Column({ name: 'parsed_year', type: 'int', nullable: true })
+  parsedYear: number; // AI-parsed publication year
+
+  @Column({ name: 'parsing_confidence', type: 'decimal', precision: 3, scale: 2, nullable: true })
+  parsingConfidence: number; // AI confidence score (0-1)
+
+  @Column({ name: 'raw_citation', type: 'text', nullable: true })
+  rawCitation: string; // Original citation string before parsing
+
+  @Column({ name: 'note_id', nullable: true })
+  noteId: number; // Link to auto-generated note
+
   // Alias for compatibility with services
   get userId(): number {
     return this.createdById;
