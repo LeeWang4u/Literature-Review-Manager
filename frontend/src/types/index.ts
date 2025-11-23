@@ -257,6 +257,7 @@ export interface PaginatedResponse<T> {
   page: number;
   pageSize: number;
   totalPages: number;
+  meta?: any;
 }
 
 export interface AuthResponse {

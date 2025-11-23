@@ -20,6 +20,7 @@ import CitationNetworkPage from '@/pages/citations/CitationNetworkPage';
 import ProfilePage from '@/pages/profile/ProfilePage';
 import TagPaperPage from '@/pages/tags/TagPapersPage';
 import ChatTestPage from '@/pages/ChatTestPage';
+import PdfViewPage from '@/components/pdf/PdfViewPage';
 
 // Create MUI theme
 const theme = createTheme({
@@ -116,6 +117,10 @@ function App() {
                   </ProtectedRoute>
                 }
               />
+              <Route 
+                path="/pdf/view/:id" 
+                element={<PdfViewPage />} />
+
               <Route
                 path="/tags"
                 element={

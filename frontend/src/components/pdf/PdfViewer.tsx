@@ -22,6 +22,7 @@ import {
   Delete,
   Visibility,
   Close,
+  OpenInNew,
 } from '@mui/icons-material';
 import { pdfService } from '@/services/pdf.service';
 import { PdfFile } from '@/types';
@@ -253,11 +254,27 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleClosePreview}>Close</Button>
+
+          <Button
+           variant="outlined"
+           startIcon={<OpenInNew />}
+           onClick={() => {
+             const pdf = pdfFiles.find((p) => p.originalFilename === previewFilename);
+             if (!pdf) return;
+             const url = `${window.location.origin}/pdf/view/${pdf.id}`;
+             window.open(url, '_blank', 'noopener,noreferrer');
+           }}
+           disabled={!previewFilename}
+         >
+           View details
+         </Button>
+           
+
           <Button
             variant="contained"
             startIcon={<Download />}
             onClick={() => {
-              const pdf = pdfFiles.find((p) => p.fileName === previewFilename);
+              const pdf = pdfFiles.find((p) => p.originalFilename === previewFilename);
               if (pdf) handleDownload(pdf);
             }}
           >
