@@ -20,7 +20,10 @@ export interface PaperMetadata {
   keywords?: string;
   references?: {
     title?: string;
+    authors?: string;
+    year?: number;
     doi?: string;
+    isInfluential?: boolean;
   }[];
 }
 
@@ -117,10 +120,10 @@ export class PaperMetadataService {
 
   private async fetchFromSemanticScholar(identifier: string): Promise<Partial<PaperMetadata>> {
     this.logger.log(`Fetching from Semantic Scholar: ${identifier}`);
-    const fields = 'title,authors,abstract,year,venue,externalIds,url,fieldsOfStudy,paperId,references.title,references.authors,references.year,references.externalIds,references.paperId';
+    const fields = 'title,authors,abstract,year,venue,externalIds,url,fieldsOfStudy,paperId,references.title,references.authors,references.year,references.externalIds,references.paperId,references.isInfluential';
     const response = await axios.get(`${this.semanticScholarBaseUrl}/${identifier}`, {
       params: { fields },
-      timeout: 10000,
+      timeout: 15000,  // Increased timeout for reference fetching
       headers: { 'User-Agent': 'LiteratureReviewApp/1.0' },
     });
     return this.mapSemanticScholarToMetadata(response.data);
@@ -418,10 +421,16 @@ export class PaperMetadataService {
       .replace(/&#39;/g, "'")
       .trim();
 
-    const references = data.reference?.map((ref: any) => ({
-      title: ref.article_title || ref.unstructured || '',
-      doi: ref.DOI || '',
-    })) || [];
+    // Limit and filter Crossref references
+    const references = (data.reference || [])
+      .filter((ref: any) => ref.article_title || ref.unstructured)  // Only keep refs with title
+      .slice(0, 15)  // Limit to 15 references
+      .map((ref: any) => ({
+        title: ref.article_title || ref.unstructured || '',
+        authors: ref.author?.map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()).filter((name: string) => name.length > 0).join(', ') || '',
+        year: ref.year || ref['journal-issue']?.['published-print']?.['date-parts']?.[0]?.[0] || undefined,
+        doi: ref.DOI || '',
+      }));
 
     return {
       title: data.title?.[0] || '',
@@ -447,10 +456,71 @@ export class PaperMetadataService {
 
     const doi = data.externalIds?.DOI || data.externalIds?.ArXiv || '';
 
-    const references = data.references?.map((ref: any) => ({
-      title: ref.title || '',
-      doi: ref.externalIds?.DOI || '',
-    })) || [];
+    // Filter and prioritize references
+    let references = data.references || [];
+    
+    this.logger.log(`Semantic Scholar returned ${references.length} references`);
+    
+    // Log first few references with year data for debugging
+    if (references.length > 0) {
+      this.logger.log(`Sample RAW reference data from S2 API (first 3):`);
+      references.slice(0, 3).forEach((ref: any, idx: number) => {
+        this.logger.log(`  Raw Ref ${idx + 1}:`);
+        this.logger.log(`    title: "${ref.title?.substring(0, 80)}..."`);
+        this.logger.log(`    year field: ${ref.year}`);
+        this.logger.log(`    isInfluential: ${ref.isInfluential}`);
+      });
+    }
+    
+    // Sort by influential first, then by year (newest first)
+    references = references
+      .filter((ref: any) => ref.title)  // Only keep refs with title
+      .map((ref: any, index: number) => {
+        let year = ref.year;
+        
+        // If year is not provided, try to extract from title (citation format)
+        if (!year && ref.title) {
+          // Match patterns like: (2021), (2024), etc. at the end or in parentheses
+          const yearMatch = ref.title.match(/\((\d{4})\)/g);
+          if (yearMatch && yearMatch.length > 0) {
+            // Take the last year found (usually the publication year)
+            const lastYear = yearMatch[yearMatch.length - 1];
+            const extractedYear = parseInt(lastYear.replace(/[()]/g, ''));
+            // Validate year is reasonable (between 1900 and current year + 1)
+            if (extractedYear >= 1900 && extractedYear <= new Date().getFullYear() + 1) {
+              year = extractedYear;
+              if (index < 3) {
+                this.logger.log(`  Extracted year ${year} from: "${ref.title.substring(0, 60)}..."`);
+              }
+            }
+          } else if (index < 3) {
+            this.logger.log(`  No year pattern found in: "${ref.title.substring(0, 60)}..."`);
+          }
+        }
+        
+        return {
+          title: ref.title || '',
+          authors: ref.authors?.map((a: any) => a.name).filter((name: string) => name?.length > 0).join(', ') || '',
+          year: year,
+          doi: ref.externalIds?.DOI || '',
+          isInfluential: ref.isInfluential || false,
+        };
+      })
+      .sort((a: any, b: any) => {
+        // Influential papers first
+        if (a.isInfluential && !b.isInfluential) return -1;
+        if (!a.isInfluential && b.isInfluential) return 1;
+        // Then by year (newest first)
+        return (b.year || 0) - (a.year || 0);
+      })
+      .slice(0, 50);  // Increased from 20 to 50 references
+
+    this.logger.log(`Filtered and mapped ${references.length} references for paper`);
+    
+    // Log year distribution
+    const withYear = references.filter((r: any) => r.year).length;
+    const withoutYear = references.length - withYear;
+    this.logger.log(`Reference year stats: ${withYear} with year, ${withoutYear} without year`);
 
     return {
       title: data.title || '',

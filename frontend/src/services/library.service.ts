@@ -1,5 +1,3 @@
-
-import { get } from 'node_modules/axios/index.d.cts';
 import axiosInstance from './api';
 import {
   LibraryItem,
@@ -21,6 +19,8 @@ export interface LibraryStatistics {
     [key: string]: number;
   };
   favorites: number;
+  reading: number;
+  completed: number;
 }
 
 export const libraryService = {

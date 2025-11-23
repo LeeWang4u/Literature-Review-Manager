@@ -118,6 +118,19 @@ export class LibraryService {
     await this.libraryRepository.remove(libraryItem);
   }
 
+  async removeFromLibraryByPaperId(userId: number, paperId: number): Promise<void> {
+    const libraryItem = await this.libraryRepository.findOne({
+      where: { userId, paperId },
+    });
+
+    if (!libraryItem) {
+      // If not found, just return silently (paper not in library)
+      return;
+    }
+
+    await this.libraryRepository.remove(libraryItem);
+  }
+
   async getLibrary(userId: number): Promise<UserLibrary[]> {
     return this.libraryRepository.find({
       where: { userId },

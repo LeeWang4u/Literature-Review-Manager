@@ -164,17 +164,19 @@ const PaperFormPage: React.FC = () => {
 
   const createMutation = useMutation({
     mutationFn: (data: CreatePaperData) => paperService.create(data),
-    onSuccess: (response) => {
-      if (response.success === false) {
+    // onSuccess: (response) => {
+    //   if (response.success === false) {
 
-        if (response.data?.id) {
-          setExistingPaperId(response.data.id);
-          setOpenDialog(true);
-        }
-        return;
-      }
-      // Phần success
-      toast.success(response.message || 'Paper created successfully!');
+    //     if (response.data?.id) {
+    //       setExistingPaperId(response.data.id);
+    //       setOpenDialog(true);
+    //     }
+    //     return;
+    //   }
+    //   // Phần success
+    //   toast.success(response.message || 'Paper created successfully!');
+    onSuccess: () => {
+      toast.success('Paper created successfully!');
       queryClient.invalidateQueries({ queryKey: ['papers'] });
       queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
       navigate('/papers');
@@ -514,8 +516,8 @@ const PaperFormPage: React.FC = () => {
           const blob = new Blob([bytes], { type: 'application/pdf' });
 
           // Upload to server
-          await pdfService.uploadBlob(createdPaper.data.id, blob, result.filename);
-          queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.data.id] });
+          await pdfService.uploadBlob(createdPaper.id, blob, result.filename);
+          queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.id] });
 
           toast.success('PDF uploaded successfully!', { id: 'arxiv-upload' });
         } catch (pdfError: any) {
@@ -525,7 +527,7 @@ const PaperFormPage: React.FC = () => {
       }
 
       // Navigate to paper detail page
-      navigate(`/papers/${createdPaper.data.id}`);
+      navigate(`/papers/${createdPaper.id}`);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to save paper');
     }

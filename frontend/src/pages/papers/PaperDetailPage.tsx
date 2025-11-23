@@ -463,14 +463,18 @@ const PaperDetailPage: React.FC = () => {
             <AiSummaryCard paperId={Number(id)} />
           </Box>
 
-          <Box mt={4}>
+          <Divider sx={{ my: 3 }} />
+
+          {/* Citation Network */}
+          <Box mt={3}>
             <Button
               variant="contained"
               startIcon={<AccountTree />}
               onClick={() => navigate(`/citations/${paper.id}`)}
               fullWidth
+              size="large"
             >
-              View Citation Network
+              View Citation Network & Top References
             </Button>
           </Box>
         </Paper>

@@ -20,6 +20,7 @@ import { ExtractMetadataDto } from './dto/extract-metadata.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaperMetadataService } from './paper-metadata.service';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
+import { CitationsService } from '../citations/citations.service';
 
 @ApiTags('Papers')
 @Controller('papers')
@@ -29,6 +30,7 @@ export class PapersController {
   constructor(
     private papersService: PapersService,
     private paperMetadataService: PaperMetadataService,
+    private citationsService: CitationsService,
   ) { }
 
   @Post('extract-metadata')
@@ -117,6 +119,14 @@ export class PapersController {
     return await this.papersService.findAll(searchDto, req.user.id);
   }
 
+  @Get('find')
+  @ApiOperation({ summary: 'Find paper by DOI or URL' })
+  @ApiResponse({ status: 200, description: 'Paper found' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  async findByDoiOrUrl(@Query('doi') doi?: string, @Query('url') url?: string, @Request() req?) {
+    return await this.papersService.findByDoiOrUrl(doi, url, req.user.id);
+  }
+
   @Get('statistics')
   @ApiOperation({ summary: 'Get papers statistics' })
   @ApiResponse({ status: 200, description: 'Statistics retrieved' })
@@ -178,6 +188,16 @@ export class PapersController {
   ) {
     // return this.papersService.getStatisticsInLibrary(req.user.id, status, favorite);
     return this.papersService.getUserLibrary(req.user.id, status, favorite);
+  }
+
+  @Post(':id/auto-rate-references')
+  @ApiOperation({ summary: 'Auto-rate all references of a paper using AI' })
+  @ApiResponse({ status: 200, description: 'References auto-rated successfully' })
+  async autoRateReferences(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req,
+  ) {
+    return this.citationsService.autoRateAllReferences(id, req.user.id);
   }
 
   

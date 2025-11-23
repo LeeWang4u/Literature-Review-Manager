@@ -387,6 +387,103 @@ Return ONLY a valid JSON object in this exact format (no markdown, no explanatio
   }
 
   /**
+   * Suggest tags from text content (title + abstract) without requiring paper ID
+   * Used for pre-save tag suggestions
+   */
+  async suggestTagsFromText(title: string, abstract: string, authors?: string, keywords?: string): Promise<{ suggested: string[]; confidence: number }> {
+    console.log(`🏷️ Generating tag suggestions from text content`);
+
+    // Generate tags using Gemini AI
+    if (!this.genAI) {
+      console.warn('⚠️ Gemini API not configured, returning keyword-based tags');
+      return this.generateKeywordBasedTagsFromText(title, abstract, keywords);
+    }
+
+    try {
+      console.log('🌟 Calling Gemini API for tag suggestions...');
+      const model = this.genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+
+      const prompt = `You are a research paper categorization expert. Analyze this academic paper and suggest relevant tags/keywords for organization.
+
+Paper Details:
+- Title: ${title}
+- Authors: ${authors || 'N/A'}
+- Keywords: ${keywords || 'N/A'}
+
+Abstract:
+${abstract || 'No abstract available'}
+
+Task:
+1. Suggest 5-8 highly relevant tags/categories for this paper
+2. Focus on: research domain, methodology, application area, key concepts
+3. Make tags concise (1-3 words each)
+4. Use consistent naming (e.g., "Machine Learning" not "ML" or "machine learning")
+
+Return ONLY a valid JSON object in this exact format (no markdown, no explanation):
+{
+  "tags": ["tag1", "tag2", "tag3", ...],
+  "confidence": 0.95
+}`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+
+      console.log('🤖 Gemini response for tags:', text.substring(0, 200));
+
+      // Parse response
+      let parsed: { tags: string[]; confidence: number };
+      
+      try {
+        // Try direct JSON parse
+        const cleaned = text.trim().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        parsed = JSON.parse(cleaned);
+      } catch (e1) {
+        console.warn('⚠️ Failed to parse Gemini response, trying alternative parsing...');
+        
+        // Try to extract JSON from response
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            parsed = JSON.parse(jsonMatch[0]);
+          } catch (e2) {
+            // Fallback to keyword-based
+            console.error('❌ Failed to parse Gemini JSON, using keyword fallback');
+            return this.generateKeywordBasedTagsFromText(title, abstract, keywords);
+          }
+        } else {
+          return this.generateKeywordBasedTagsFromText(title, abstract, keywords);
+        }
+      }
+
+      // Validate and clean tags
+      const suggestedTags = Array.isArray(parsed.tags) 
+        ? parsed.tags
+            .filter(tag => typeof tag === 'string' && tag.length > 0)
+            .map(tag => tag.trim())
+            .filter(tag => tag.length <= 50) // Max tag length
+            .slice(0, 8) // Max 8 tags
+        : [];
+
+      const confidence = typeof parsed.confidence === 'number' 
+        ? Math.max(0, Math.min(1, parsed.confidence))
+        : 0.85;
+
+      console.log(`✅ Generated ${suggestedTags.length} tag suggestions with confidence ${confidence}`);
+
+      return {
+        suggested: suggestedTags,
+        confidence,
+      };
+
+    } catch (error) {
+      console.error('❌ Gemini API error for tags:', error);
+      // Fallback to keyword-based tags
+      return this.generateKeywordBasedTagsFromText(title, abstract, keywords);
+    }
+  }
+
+  /**
    * Generate tags based on paper keywords and title (fallback method)
    */
   private generateKeywordBasedTags(paper: Paper): { suggested: string[]; confidence: number } {
@@ -460,4 +557,43 @@ Return ONLY a valid JSON object in this exact format (no markdown, no explanatio
 
     return `${intro}\n\n[... CONTENT TRUNCATED FOR LENGTH - Middle section omitted ...]\n\n${conclusion}`;
   }
+
+  /**
+   * Generate tags from text without paper object (fallback method)
+   */
+  private generateKeywordBasedTagsFromText(title: string, abstract: string, keywords?: string): { suggested: string[]; confidence: number } {
+    const tags = new Set<string>();
+
+    // Extract from keywords
+    if (keywords) {
+      keywords
+        .split(/[,;]/)
+        .map(k => k.trim())
+        .filter(k => k.length > 0 && k.length <= 50)
+        .slice(0, 5)
+        .forEach(k => tags.add(k));
+    }
+
+    // Extract from title (common academic terms)
+    const titleWords = title.toLowerCase();
+    const commonTerms = [
+      'machine learning', 'deep learning', 'neural network', 'artificial intelligence',
+      'data science', 'computer vision', 'natural language processing', 'nlp',
+      'reinforcement learning', 'supervised learning', 'unsupervised learning',
+      'optimization', 'algorithm', 'classification', 'regression', 'clustering',
+      'transformer', 'attention mechanism', 'generative model',
+    ];
+
+    commonTerms.forEach(term => {
+      if (titleWords.includes(term)) {
+        tags.add(term.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
+      }
+    });
+
+    return {
+      suggested: Array.from(tags).slice(0, 8),
+      confidence: 0.6, // Lower confidence for keyword-based
+    };
+  }
 }
+
