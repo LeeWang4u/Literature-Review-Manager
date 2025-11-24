@@ -517,13 +517,15 @@ export class PapersService {
       query.where('paper.addedBy = :userId', { userId });
     }
 
+    query.andWhere('paper.is_reference = :isReference', { isReference: false });
+
     const total = await query.getCount();
 
     const byYear = await query
       .select('paper.publicationYear', 'year')
       .addSelect('COUNT(*)', 'count')
       .groupBy('paper.publicationYear')
-      .orderBy('paper.publicationYear', 'DESC')
+      .orderBy('paper.publicationYear', 'ASC')//'DESC')
       .getRawMany();
 
     return {
@@ -548,6 +550,30 @@ export class PapersService {
 
     return await this.papersRepository.save(paper);
   }
+
+  async countPapersByStatus(userId?: number): Promise<Record<'to_read' | 'reading' | 'completed', number>> {
+    const statuses: Array<'to_read' | 'reading' | 'completed'> = ['to_read', 'reading', 'completed'];
+    const baseQuery = this.papersRepository.createQueryBuilder('paper')
+      .where('paper.is_reference = :isReference', { isReference: false });
+
+    if (userId !== undefined) {
+      baseQuery.andWhere('paper.added_by = :userId', { userId });
+    }
+
+    const result: Record<'to_read' | 'reading' | 'completed', number> = {
+      to_read: 0,
+      reading: 0,
+      completed: 0,
+    };
+
+    for (const status of statuses) {
+      result[status] = await baseQuery.clone().andWhere('paper.status = :status', { status }).getCount();
+    }
+
+    return result;
+  }
+
+
 
   async getStatisticsInLibrary(userId: number, status?: string, favorite?: string) {
     const query = this.papersRepository

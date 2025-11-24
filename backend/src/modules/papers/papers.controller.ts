@@ -235,4 +235,21 @@ export class PapersController {
     );
   }
 
+
+  @Post(':id/fetch-nested/eager')
+  async fetchNestedEager(
+    @Param('id') id: string,
+    @Body() body: { targetDepth?: number; maxDepth?: number },
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id;
+    const paperId = Number(id);
+    const targetDepth = body?.targetDepth ?? 1;
+    const maxDepth = body?.maxDepth ?? 2;
+
+    // Calls the existing method that already does "find DOI if missing then fetch refs"
+    const result = await this.papersService.manuallyFetchNestedReferences(paperId, userId, targetDepth, maxDepth);
+    return { success: true, ...result };
+  }
+
 }

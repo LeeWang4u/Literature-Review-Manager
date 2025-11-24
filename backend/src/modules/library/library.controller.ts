@@ -103,7 +103,11 @@ export class LibraryController {
   @Get('filter')
   async getLibrary(
     @Req() req,
-    @Query() filters: { status?: 'to_read' | 'reading' | 'completed'; favorite?: boolean },
+    @Query() filters: { status?: 'to_read' | 'reading' | 'completed'; 
+      favorite?: boolean;
+      page?: number;
+      pageSize?: number;
+      search?: string},
   ) {
     return this.libraryService.getUserLibrary(req.user.id, filters);
   }
@@ -117,6 +121,13 @@ export class LibraryController {
   ): Promise<{ inLibrary: boolean }> {
     const inLibrary = await this.libraryService.inLibrary(req.user.id, paperId);
     return { inLibrary };
+  }
+
+  @Get('count-by-status')
+  @ApiOperation({ summary: 'Get count of papers by status in user library' })
+  @ApiResponse({ status: 200, description: 'Return counts by status' })
+  async getCountByStatus(@Req() req): Promise<Record<'to_read' | 'reading' | 'completed', number>> {
+    return this.libraryService.countByStatusInLibrary(req.user.id);
   }
 
 

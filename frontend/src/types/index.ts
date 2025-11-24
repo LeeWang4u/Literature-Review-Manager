@@ -86,7 +86,7 @@ export interface SearchPaperParams {
 export interface PaperStatistics {
   total: number;
   totalPapers: number;
-  papersByYear: { year: number; count: number }[];
+  byYear: { year: number; count: number }[];
 }
 
 export interface PaperMetadataResponse {

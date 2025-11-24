@@ -129,6 +129,10 @@ export const paperService = {
     });
     return response.data;
   },
+
+   fetchNestedReferencesEager: (paperId: number, targetDepth = 1, maxDepth = 2) =>
+    axiosInstance.post(`/papers/${paperId}/fetch-nested/eager`, { targetDepth, maxDepth }).then(r => r.data),
+
 };
 
 

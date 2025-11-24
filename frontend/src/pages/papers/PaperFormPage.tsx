@@ -74,6 +74,9 @@ const PaperFormPage: React.FC = () => {
   const [openDialog, setOpenDialog] = useState(false);
   const [existingPaperId, setExistingPaperId] = useState<number | null>(null);
 
+  const [openMetadataError, setOpenMetadataError] = useState(false);
+  const [metadataErrorMessage, setMetadataErrorMessage] = useState('');
+
   const {
     control,
     handleSubmit,
@@ -307,10 +310,10 @@ const PaperFormPage: React.FC = () => {
       setSuggestedTags(result.suggested);
       setTagConfidence(result.confidence);
 
-      toast.success(
-        `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
-        { id: 'suggest-tags', duration: 4000 }
-      );
+      // toast.success(
+      //   `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
+      //   { id: 'suggest-tags', duration: 4000 }
+      // );
 
     } catch (error: any) {
       console.error('Error suggesting tags:', error);
@@ -359,10 +362,10 @@ const PaperFormPage: React.FC = () => {
       // await paperService.delete(tempPaper.data.id);
       await paperService.delete(tempPaper.id);
 
-      toast.success(
-        `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
-        { duration: 5000 }
-      );
+      // toast.success(
+      //   `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
+      //   { duration: 5000 }
+      // );
 
     } catch (error: any) {
       console.error('Error auto-suggesting tags:', error);
@@ -405,14 +408,14 @@ const PaperFormPage: React.FC = () => {
       if (metadata.pdfAvailable && metadata.arxivId) {
         setArxivPdfAvailable(true);
         setArxivMetadata(metadata);
-        toast.success(
-          'Metadata extracted successfully! ArXiv PDF is available for download.',
-          { duration: 5000 }
-        );
+        // toast.success(
+        //   'Metadata extracted successfully! ArXiv PDF is available for download.',
+        //   { duration: 5000 }
+        // );
       } else {
         setArxivPdfAvailable(false);
         setArxivMetadata(null);
-        toast.success('Metadata extracted successfully! AI is analyzing tags...');
+        // toast.success('Metadata extracted successfully! AI is analyzing tags...');
       }
 
       setDoiInput(''); // Clear input after successful extraction
@@ -425,8 +428,12 @@ const PaperFormPage: React.FC = () => {
         }, 500);
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Failed to extract metadata. Please enter details manually.';
-      toast.error(errorMessage);
+      const errorMessage = error.response?.data?.message || 'Failed to extract metadata. Please re-enter or enter the information manually.';
+      console.log('Metadata extraction error message:', errorMessage);
+      setMetadataErrorMessage('Failed to extract metadata. Please re-enter or enter the information manually.');
+      setOpenMetadataError(true);
+
+
       setMetadataExtracted(false);
       setArxivPdfAvailable(false);
       setArxivMetadata(null);
@@ -570,6 +577,26 @@ const PaperFormPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog
+        open={openMetadataError}
+        onClose={() => setOpenMetadataError(false)}
+        aria-labelledby="metadata-error-dialog-title"
+        aria-describedby="metadata-error-dialog-description"
+      >
+        <DialogTitle id="metadata-error-dialog-title">Metadata Extraction Failed</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="metadata-error-dialog-description">
+            {metadataErrorMessage}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenMetadataError(false)} color="primary" autoFocus>
+            OK
+          </Button>
+        </DialogActions>
+      </Dialog>
+
 
       <MainLayout>
         <Container maxWidth="md">
@@ -1005,91 +1032,12 @@ const PaperFormPage: React.FC = () => {
                             </Box>
                           );
                         }}
-                        // renderOption={(props, option) => {
-                        //   const isString = typeof option === 'string';
-                        //   const isAiSuggested = !isString && 'isAiSuggested' in option && option.isAiSuggested;
-                        //   const isNew = !isString && 'isNew' in option && option.isNew;
-                        //   const tagName = isString ? option : option.name;
-                        //   const tagColor = !isString ? option.color : '#1976d2';
 
-                        //   // Check if already selected
-                        //   const isSelected = field.value?.some((v: Tag) =>
-                        //     v.name.toLowerCase() === tagName.toLowerCase()
-                        //   );
-
-                        //   return (
-                        //     <Box
-                        //       component="li"
-                        //       {...props}
-                        //       sx={{
-                        //         display: 'flex !important',
-                        //         alignItems: 'center',
-                        //         gap: 1,
-                        //         opacity: isSelected ? 0.5 : 1,
-                        //         bgcolor: isSelected ? 'action.selected' : 'transparent',
-                        //       }}
-                        //     >
-                        //       {/* Color indicator */}
-                        //       <Box
-                        //         sx={{
-                        //           width: 12,
-                        //           height: 12,
-                        //           borderRadius: '50%',
-                        //           bgcolor: tagColor,
-                        //           flexShrink: 0,
-                        //         }}
-                        //       />
-
-                        //       {/* Tag name */}
-                        //       <Typography sx={{ flexGrow: 1 }}>
-                        //         {tagName}
-                        //       </Typography>
-
-                        //       {/* Badges */}
-                        //       <Box sx={{ display: 'flex', gap: 0.5 }}>
-                        //         {isSelected && (
-                        //           <Chip
-                        //             label="Selected"
-                        //             size="small"
-                        //             color="primary"
-                        //             sx={{ height: 20, fontSize: '0.7rem' }}
-                        //           />
-                        //         )}
-                        //         {isAiSuggested && (
-                        //           <Chip
-                        //             icon={<AutoAwesome sx={{ fontSize: 14 }} />}
-                        //             label="AI"
-                        //             size="small"
-                        //             color="secondary"
-                        //             sx={{ height: 20, fontSize: '0.7rem' }}
-                        //           />
-                        //         )}
-                        //         {isNew && !isAiSuggested && (
-                        //           <Chip
-                        //             label="New"
-                        //             size="small"
-                        //             color="success"
-                        //             sx={{ height: 20, fontSize: '0.7rem' }}
-                        //           />
-                        //         )}
-                        //       </Box>
-                        //     </Box>
-                        //   );
-                        // }}
                         renderInput={(params) => (
                           <TextField
                             {...params}
                             label="Tags"
-                            // placeholder={
-                            //   suggestedTags.length > 0
-                            //     ? `${suggestedTags.length} AI suggestions available - Select from dropdown or type to create`
-                            //     : 'Select existing or type to create new tags'
-                            // }
-                            // helperText={
-                            //   suggestedTags.length > 0
-                            //     ? `🤖 ${suggestedTags.length} AI-suggested tags in dropdown (marked with AI badge) • ${Math.round(tagConfidence * 100)}% confidence • New tags will be created when you save the paper`
-                            //     : 'Select from dropdown or type to create new tags • New tags will be created when you save the paper'
-                            // }
+
 
                             placeholder="Select existing or type to create new tags"
                             helperText="Select from dropdown or type to create new tags • New tags will be created when you save the paper"
@@ -1178,16 +1126,7 @@ const PaperFormPage: React.FC = () => {
                     )}
                   />
 
-                  {/* Info about AI tags in dropdown */}
-                  {/* {suggestedTags.length > 0 && (
-                    <Alert severity="success" sx={{ mt: 2 }}>
-                      <Typography variant="body2">
-                        🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above
-                        (marked with <Chip label="AI" size="small" color="secondary" sx={{ height: 18, fontSize: '0.7rem' }} /> badge).
-                        Confidence: <strong>{Math.round(tagConfidence * 100)}%</strong>
-                      </Typography>
-                    </Alert>
-                  )} */}
+
 
                   {/* Manual trigger button */}
                   {!isSuggestingTags && suggestedTags.length === 0 && (
