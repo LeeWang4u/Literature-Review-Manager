@@ -1,3 +1,4 @@
+
 import axiosInstance from './api';
 import {
   LibraryItem,
@@ -32,8 +33,28 @@ export const libraryService = {
 
 
 
-  getLibrary: async (filters?: { status?: string; favorite?: boolean }): Promise<LibraryItem[]> => {
-    const response = await axiosInstance.get<LibraryItem[]>('/library/filter', { params: filters });
+  // getLibrary: async (filters?: { status?: string; 
+  //   favorite?: boolean; 
+  //   page?: number; 
+  //   pageSize?: number,
+  //   search?: string
+  //  }): Promise<LibraryItem[]> => {
+  //   const response = await axiosInstance.get<LibraryItem[]>('/library/filter', { params: filters });
+  //   return response.data;
+  // },
+
+  getLibrary: async (filters?: { status?: string; 
+    favorite?: boolean; 
+    page?: number; 
+    pageSize?: number,
+    search?: string
+   }): Promise<{ items: LibraryItem[]; total: number }> => {
+    const response = await axiosInstance.get<{ items: LibraryItem[]; total: number }>('/library/filter', { params: filters });
+    return response.data;
+  },
+
+  countByStatus: async (): Promise<Record<'to_read' | 'reading' | 'completed', number>> => {
+    const response = await axiosInstance.get<Record<'to_read' | 'reading' | 'completed', number>>('/library/count-by-status');
     return response.data;
   },
 

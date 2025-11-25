@@ -50,12 +50,7 @@ interface PaperFormData {
   tags: Tag[];
   references?: {
     title?: string;
-    authors?: string;
-    year?: number;
     doi?: string;
-    citationContext?: string;
-    relevanceScore?: number;
-    isInfluential?: boolean;
   }[];
 }
 
@@ -78,6 +73,9 @@ const PaperFormPage: React.FC = () => {
 
   const [openDialog, setOpenDialog] = useState(false);
   const [existingPaperId, setExistingPaperId] = useState<number | null>(null);
+
+  const [openMetadataError, setOpenMetadataError] = useState(false);
+  const [metadataErrorMessage, setMetadataErrorMessage] = useState('');
 
   const {
     control,
@@ -169,24 +167,25 @@ const PaperFormPage: React.FC = () => {
 
   const createMutation = useMutation({
     mutationFn: (data: CreatePaperData) => paperService.create(data),
+    // onSuccess: (response) => {
+    //   if (response.success === false) {
+
+    //     if (response.data?.id) {
+    //       setExistingPaperId(response.data.id);
+    //       setOpenDialog(true);
+    //     }
+    //     return;
+    //   }
+    //   // Phần success
+    //   toast.success(response.message || 'Paper created successfully!');
     onSuccess: () => {
       toast.success('Paper created successfully!');
       queryClient.invalidateQueries({ queryKey: ['papers'] });
       queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
       navigate('/papers');
     },
-    onError: (error: any) => {
-      // Handle 409 Conflict - paper already exists
-      if (error.response?.status === 409) {
-        const existingId = error.response?.data?.data?.id;
-        if (existingId) {
-          setExistingPaperId(existingId);
-          setOpenDialog(true);
-          return;
-        }
-      }
-      // Handle other errors
-      toast.error(error.response?.data?.message || error.message || 'Failed to create paper');
+    onError: (error: any) => {  // Handle real errors (network, server crash, etc.)
+      toast.error(error.message || 'Failed to create paper');
     },
   });
   // Update paper mutation
@@ -206,6 +205,7 @@ const PaperFormPage: React.FC = () => {
   const onSubmit = async (data: PaperFormData) => {
     // First, create any new tags (those with negative IDs)
     const newTags = data.tags.filter((tag) => tag.id < 0);
+    const existingTags = data.tags.filter((tag) => tag.id > 0);
 
     const createdTagIds: number[] = [];
 
@@ -237,9 +237,11 @@ const PaperFormPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
     }
 
-    // Combine existing tag IDs (positive) with newly created tag IDs
-    const existingTagIds = data.tags.filter((tag) => tag.id > 0).map((tag) => tag.id);
-    const allTagIds = [...existingTagIds, ...createdTagIds];
+    // Combine existing tag IDs with newly created tag IDs
+    const allTagIds = [
+      ...existingTags.map((tag) => tag.id),
+      ...createdTagIds,
+    ];
 
     const paperData: CreatePaperData = {
       title: data.title,
@@ -249,16 +251,12 @@ const PaperFormPage: React.FC = () => {
       journal: data.journal || undefined,
       doi: data.doi || undefined,
       url: data.url || undefined,
-      tagIds: allTagIds,
+      tagIds: data.tags.map((tag) => tag.id),
       references: data.references?.map((ref) => ({
         title: ref.title || '',
-        authors: ref.authors || undefined,
-        year: ref.year || undefined,
         doi: ref.doi || undefined,
-        citationContext: ref.citationContext || undefined,
-        relevanceScore: ref.relevanceScore || undefined,
-        isInfluential: ref.isInfluential || false,
       })),
+      // tagIds: allTagIds,
     };
 
     if (isEditMode) {
@@ -312,10 +310,10 @@ const PaperFormPage: React.FC = () => {
       setSuggestedTags(result.suggested);
       setTagConfidence(result.confidence);
 
-      toast.success(
-        `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
-        { id: 'suggest-tags', duration: 4000 }
-      );
+      // toast.success(
+      //   `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
+      //   { id: 'suggest-tags', duration: 4000 }
+      // );
 
     } catch (error: any) {
       console.error('Error suggesting tags:', error);
@@ -328,19 +326,28 @@ const PaperFormPage: React.FC = () => {
     }
   };
 
-  // Auto suggest tags from text without creating paper
+  // Auto suggest tags without creating paper (used after metadata extraction)
   const handleAutoSuggestTags = async (title: string, abstract: string) => {
     if (!title || !abstract) return;
 
     setIsSuggestingTags(true);
 
     try {
-      const result = await summaryService.suggestTagsFromText({
+      // Create a temporary paper for tag suggestions
+      const tempPaper = await paperService.create({
         title: title,
+        authors: control._formValues.authors || 'Unknown',
         abstract: abstract,
-        authors: control._formValues.authors,
-        keywords: control._formValues.keywords,
+        publicationYear: control._formValues.publicationYear || new Date().getFullYear(),
+        journal: control._formValues.journal || '',
+        doi: control._formValues.doi || '',
+        url: control._formValues.url || '',
+        tagIds: [],
       });
+
+      // console.log('Temporary paper created :', tempPaper);
+
+      const result = await summaryService.suggestTags(tempPaper.id);
 
       // Save AI suggested tag names permanently
       const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
@@ -350,15 +357,19 @@ const PaperFormPage: React.FC = () => {
       setSuggestedTags(result.suggested);
       setTagConfidence(result.confidence);
 
-      toast.success(
-        `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
-        { duration: 5000 }
-      );
+      // Delete the temporary paper
+      // console.log('Deleting temporary paper with ID:', tempPaper.id);
+      // await paperService.delete(tempPaper.data.id);
+      await paperService.delete(tempPaper.id);
+
+      // toast.success(
+      //   `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
+      //   { duration: 5000 }
+      // );
 
     } catch (error: any) {
       console.error('Error auto-suggesting tags:', error);
       // Fail silently for auto-suggest
-      toast.error('Failed to get AI tag suggestions. You can still add tags manually.');
     } finally {
       setIsSuggestingTags(false);
     }
@@ -386,10 +397,7 @@ const PaperFormPage: React.FC = () => {
         tags: [], // Keep existing selected tags
         references: metadata.references?.map((ref: any) => ({
           title: ref.title || '',
-          authors: ref.authors || '',
-          year: ref.year || undefined,
           doi: ref.doi || '',
-          isInfluential: ref.isInfluential || false,
         })) || [],
       });
 
@@ -400,14 +408,14 @@ const PaperFormPage: React.FC = () => {
       if (metadata.pdfAvailable && metadata.arxivId) {
         setArxivPdfAvailable(true);
         setArxivMetadata(metadata);
-        toast.success(
-          'Metadata extracted successfully! ArXiv PDF is available for download.',
-          { duration: 5000 }
-        );
+        // toast.success(
+        //   'Metadata extracted successfully! ArXiv PDF is available for download.',
+        //   { duration: 5000 }
+        // );
       } else {
         setArxivPdfAvailable(false);
         setArxivMetadata(null);
-        toast.success('Metadata extracted successfully! AI is analyzing tags...');
+        // toast.success('Metadata extracted successfully! AI is analyzing tags...');
       }
 
       setDoiInput(''); // Clear input after successful extraction
@@ -420,8 +428,12 @@ const PaperFormPage: React.FC = () => {
         }, 500);
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Failed to extract metadata. Please enter details manually.';
-      toast.error(errorMessage);
+      const errorMessage = error.response?.data?.message || 'Failed to extract metadata. Please re-enter or enter the information manually.';
+      console.log('Metadata extraction error message:', errorMessage);
+      setMetadataErrorMessage('Failed to extract metadata. Please re-enter or enter the information manually.');
+      setOpenMetadataError(true);
+
+
       setMetadataExtracted(false);
       setArxivPdfAvailable(false);
       setArxivMetadata(null);
@@ -565,6 +577,26 @@ const PaperFormPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog
+        open={openMetadataError}
+        onClose={() => setOpenMetadataError(false)}
+        aria-labelledby="metadata-error-dialog-title"
+        aria-describedby="metadata-error-dialog-description"
+      >
+        <DialogTitle id="metadata-error-dialog-title">Metadata Extraction Failed</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="metadata-error-dialog-description">
+            {metadataErrorMessage}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenMetadataError(false)} color="primary" autoFocus>
+            OK
+          </Button>
+        </DialogActions>
+      </Dialog>
+
 
       <MainLayout>
         <Container maxWidth="md">
@@ -926,6 +958,9 @@ const PaperFormPage: React.FC = () => {
                           return option.id === value.id;
                         }}
                         renderOption={(props, option) => {
+                          // avoid spreading `key` inside props to prevent React warning
+                          const { key, ...listItemProps } = props as any;
+
                           const isString = typeof option === 'string';
                           const isAiSuggested = !isString && 'isAiSuggested' in option && option.isAiSuggested;
                           const isNew = !isString && 'isNew' in option && option.isNew;
@@ -939,8 +974,9 @@ const PaperFormPage: React.FC = () => {
 
                           return (
                             <Box
+                              key={key}
                               component="li"
-                              {...props}
+                              {...listItemProps}
                               sx={{
                                 display: 'flex !important',
                                 alignItems: 'center',
@@ -996,20 +1032,16 @@ const PaperFormPage: React.FC = () => {
                             </Box>
                           );
                         }}
+
                         renderInput={(params) => (
                           <TextField
                             {...params}
                             label="Tags"
-                            placeholder={
-                              suggestedTags.length > 0
-                                ? `${suggestedTags.length} AI suggestions available - Select from dropdown or type to create`
-                                : 'Select existing or type to create new tags'
-                            }
-                            helperText={
-                              suggestedTags.length > 0
-                                ? `🤖 ${suggestedTags.length} AI-suggested tags in dropdown (marked with AI badge) • ${Math.round(tagConfidence * 100)}% confidence • New tags will be created when you save the paper`
-                                : 'Select from dropdown or type to create new tags • New tags will be created when you save the paper'
-                            }
+
+
+                            placeholder="Select existing or type to create new tags"
+                            helperText="Select from dropdown or type to create new tags • New tags will be created when you save the paper"
+
                             InputProps={{
                               ...params.InputProps,
                               endAdornment: (
@@ -1094,16 +1126,7 @@ const PaperFormPage: React.FC = () => {
                     )}
                   />
 
-                  {/* Info about AI tags in dropdown */}
-                  {suggestedTags.length > 0 && (
-                    <Alert severity="success" sx={{ mt: 2 }}>
-                      <Typography variant="body2">
-                        🤖 <strong>{suggestedTags.length} AI-suggested tags</strong> are now available in the dropdown above
-                        (marked with <Chip label="AI" size="small" color="secondary" sx={{ height: 18, fontSize: '0.7rem' }} /> badge).
-                        Confidence: <strong>{Math.round(tagConfidence * 100)}%</strong>
-                      </Typography>
-                    </Alert>
-                  )}
+
 
                   {/* Manual trigger button */}
                   {!isSuggestingTags && suggestedTags.length === 0 && (

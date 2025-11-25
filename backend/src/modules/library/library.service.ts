@@ -56,21 +56,6 @@ export class LibraryService {
     return await this.libraryRepository.save(libraryItem);
   }
 
-  // async getUserLibrary(userId: number, status?: 'to_read' | 'reading' | 'completed'): Promise<UserLibrary[]> {
-  //   const query = this.libraryRepository
-  //     .createQueryBuilder('library')
-  //     .innerJoinAndSelect('library.paper', 'paper') // Dùng innerJoin để đảm bảo paper tồn tại
-  //     .leftJoinAndSelect('paper.tags', 'tags')
-  //     .where('library.userId = :userId', { userId });
-
-  //   // Lọc trực tiếp trên cột status của bảng 'papers'
-  //   if (status) {
-  //     query.andWhere('paper.status = :status', { status });
-  //   }
-
-  //   query.orderBy('library.addedAt', 'DESC');
-  //   return await query.getMany();
-  // }
 
   async updateStatus(id: number, userId: number, updateStatusDto: UpdateLibraryStatusDto): Promise<UserLibrary> {
     // 1. Tìm mục trong thư viện của người dùng và load cả 'paper' liên quan
@@ -139,82 +124,22 @@ export class LibraryService {
     });
   }
 
-//   async getUserLibrary(
-//   userId: number,
-//   filters: {
-//     status?: 'to_read' | 'reading' | 'completed';
-//     favorite?: boolean;
-//   }
-// ): Promise<UserLibrary[]> {
-//   const query = this.libraryRepository
-//     .createQueryBuilder('library')
-//     .innerJoinAndSelect('library.paper', 'paper')
-//     .leftJoinAndSelect('paper.tags', 'tags') 
-//     .where('library.userId = :userId', { userId });
 
-//   // Nếu có favorite flag, ưu tiên lấy theo favorite
-//   if (filters.favorite !== undefined) {
-//     const isFavorite = String(filters.favorite).toLowerCase() === 'true';
-//     query.andWhere('paper.favorite = :favorite', { favorite: isFavorite });
-//     // query.andWhere('paper.favorite = :favorite', { favorite: filters.favorite });
-//   }
-//   // Nếu không có favorite flag và có status, lọc theo status
-//   else if (filters.status) {
-//     query.andWhere('paper.status = :status', { status: filters.status });
-//     // query.andWhere('library.status = :status', { status: filters.status });
-//   }
-
-//   // Sắp xếp theo thời gian thêm vào gần nhất
-//   query.orderBy('library.addedAt', 'DESC');
-
-//   return await query.getMany();
-// }
-
-  // async getStatistics(userId: number): Promise<{
-  //   byStatus: Record<string, number>;
-  //   favorites: number;
-  //   total: number;
-  // }> {
-  //   // Lấy tất cả các item trong thư viện và join với paper
-  //   const libraryItems = await this.libraryRepository.find({
-  //     where: { userId },
-  //     relations: ['paper'],
-  //   });
-
-  //   const byStatus: Record<string, number> = {
-  //     to_read: 0,
-  //     reading: 0,
-  //     completed: 0,
-  //   };
-  //   let favorites = 0;
-
-  //   for (const item of libraryItems) {
-  //     if (item.paper) { // Kiểm tra paper có tồn tại không
-  //       // Đếm dựa trên status của paper
-  //       if (byStatus.hasOwnProperty(item.paper.status)) {
-  //         byStatus[item.paper.status]++;
-  //       }
-  //       // Đếm dựa trên favorite của paper
-  //       if (item.paper.favorite) {
-  //         favorites++;
-  //       }
-  //     }
-  //   }
-
-  //   return {
-  //     byStatus,
-  //     favorites,
-  //     total: libraryItems.length,
-  //   };
-  // }
 
   async getUserLibrary(
   userId: number,
   filters: {
     status?: 'to_read' | 'reading' | 'completed';
     favorite?: boolean | string; // Chấp nhận cả boolean và string
+    page?: number; // Tham số trang
+    pageSize?: number;
+    search?: string // Số lượng mục trên mỗi trang
   }
-): Promise<UserLibrary[]> {
+): Promise<{ items: UserLibrary[]; total: number }> {
+
+  const page = filters.page || 1;
+  const pageSize = filters.pageSize || 10;
+
   const query = this.libraryRepository
     .createQueryBuilder('library')
     .innerJoinAndSelect('library.paper', 'paper')
@@ -226,6 +151,8 @@ export class LibraryService {
     query.andWhere('paper.status = :status', { status: filters.status });
   }
 
+
+
   // 2. Áp dụng bộ lọc favorite nếu có
   // NestJS thường tự động chuyển 'true'/'false' thành boolean, nhưng cách này an toàn hơn
   if (filters.favorite !== undefined && filters.favorite !== null) {
@@ -233,10 +160,83 @@ export class LibraryService {
     query.andWhere('paper.favorite = :isFavorite', { isFavorite });
   }
 
+
+    if (filters.search) {
+      query.andWhere(
+        '(paper.title LIKE :search OR paper.abstract LIKE :search OR paper.keywords LIKE :search OR paper.authors LIKE :search)',
+        { search: `%${filters.search}%` },
+      );
+    }
+
+
   // Sắp xếp và trả về kết quả
   query.orderBy('library.addedAt', 'DESC');
-  return await query.getMany();
+
+  query.skip((page - 1) * pageSize); // Bỏ qua số lượng mục đã có
+  query.take(pageSize); // Lấy số lượng mục theo pageSize
+
+  // return await query.getMany();
+  const [items, total] = await query.getManyAndCount();
+  return { items, total };
 }
+
+  async countByStatusInLibrary(userId: number): Promise<Record<'to_read' | 'reading' | 'completed', number>> {
+    const statuses: Array<'to_read' | 'reading' | 'completed'> = ['to_read', 'reading', 'completed'];
+
+    const baseQuery = this.libraryRepository
+      .createQueryBuilder('library')
+      .innerJoin('library.paper', 'paper')
+      .where('library.userId = :userId', { userId })
+      .andWhere('paper.isReference = :isReference', { isReference: false });
+
+    const result: Record<'to_read' | 'reading' | 'completed', number> = {
+      to_read: 0,
+      reading: 0,
+      completed: 0,
+    };
+
+    for (const status of statuses) {
+      result[status] = await baseQuery.clone().andWhere('paper.status = :status', { status }).getCount();
+    }
+
+    return result;
+  }
+
+// async getUserLibrary(
+//   userId: number,
+//   filters: {
+//     status?: 'to_read' | 'reading' | 'completed';
+//     favorite?: boolean | string; // Chấp nhận cả boolean và string
+//   },
+//   page: number = 1, // Tham số trang, mặc định là 1
+//   pageSize: number = 8 // Số lượng mục trên mỗi trang, mặc định là 8
+// ): Promise<UserLibrary[]> {
+//   const query = this.libraryRepository
+//     .createQueryBuilder('library')
+//     .innerJoinAndSelect('library.paper', 'paper')
+//     .leftJoinAndSelect('paper.tags', 'tags')
+//     .where('library.userId = :userId', { userId });
+
+//   // 1. Áp dụng bộ lọc status nếu có
+//   if (filters.status) {
+//     query.andWhere('paper.status = :status', { status: filters.status });
+//   }
+
+//   // 2. Áp dụng bộ lọc favorite nếu có
+//   if (filters.favorite !== undefined && filters.favorite !== null) {
+//     const isFavorite = String(filters.favorite).toLowerCase() === 'true';
+//     query.andWhere('paper.favorite = :isFavorite', { isFavorite });
+//   }
+
+//   // 3. Sắp xếp
+//   query.orderBy('library.addedAt', 'DESC');
+
+//   // 4. Phân trang
+//   query.skip((page - 1) * pageSize); // Bỏ qua số lượng mục đã có
+//   query.take(pageSize); // Lấy số lượng mục theo pageSize
+
+//   return await query.getMany();
+// }
 
 async getStatistics(userId: number): Promise<{
     byStatus: Record<string, number>;

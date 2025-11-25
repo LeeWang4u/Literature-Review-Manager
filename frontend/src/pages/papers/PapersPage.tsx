@@ -1,3 +1,5 @@
+
+
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
@@ -26,10 +28,10 @@ import {
   Divider,
   InputAdornment,
 } from '@mui/material';
-import { 
-  Search, 
-  Add, 
-  FilterList, 
+import {
+  Search,
+  Add,
+  FilterList,
   Clear,
   ExpandMore,
   ExpandLess,
@@ -51,13 +53,15 @@ const PapersPage: React.FC = () => {
   const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [sortBy, setSortBy] = useState<'title' | 'year' | 'authors' | 'createdAt'>('createdAt');
   const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('DESC');
-  
+
   const [searchParams, setSearchParams] = useState<SearchPaperParams>({
     page: 1,
     pageSize: 12,
     sortBy: 'createdAt',
     sortOrder: 'DESC',
   });
+
+  const currentPage = searchParams.page ?? 1;
 
   // Fetch papers
   const { data, isLoading } = useQuery({
@@ -91,7 +95,7 @@ const PapersPage: React.FC = () => {
     if (searchQuery.trim()) params.query = searchQuery.trim();
     if (authorFilter.trim()) params.author = authorFilter.trim();
     if (journalFilter.trim()) params.journal = journalFilter.trim();
-    
+
     // Handle year range
     if (yearFrom && yearTo) {
       // Backend expects single year, so we'll use query for range
@@ -127,26 +131,29 @@ const PapersPage: React.FC = () => {
     });
   };
 
-  const handlePageChange = (_: React.ChangeEvent<unknown>, page: number) => {
-    setSearchParams({ ...searchParams, page });
+  const handlePageChange = (_: React.ChangeEvent<unknown> | null, page: number) => {
+    setSearchParams((prev) => ({ ...prev, page }));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const hasActiveFilters = searchQuery || authorFilter || journalFilter || yearFrom || yearTo || selectedTags.length > 0;
+  const goToPage = (page: number) => handlePageChange(null, page);
 
+  const hasActiveFilters = searchQuery || authorFilter || journalFilter || yearFrom || yearTo || selectedTags.length > 0;
+  console.log(data);
+  console.log(data?.meta.totalPages);
   return (
     <MainLayout>
       <Container maxWidth="lg">
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
           <Typography variant="h4">Papers</Typography>
           <Box display="flex" gap={2}>
-            <Button
+            {/* <Button
               variant="outlined"
               startIcon={<Add />}
               onClick={() => setQuickAddOpen(true)}
             >
               Quick Add
-            </Button>
+            </Button> */}
             <Button
               variant="contained"
               startIcon={<Add />}
@@ -418,21 +425,55 @@ const PapersPage: React.FC = () => {
                 </Grid>
               ))}
             </Grid>
+              
+            {data && (Number(data?.meta.totalPages) > 1) && (() => {
+              const totalPages = Number(data?.meta.totalPages) || 1;
 
-            {data && data.totalPages > 1 && (
-              <Box display="flex" justifyContent="center" mt={4}>
-                <Pagination
-                  count={data.totalPages}
-                  page={data.page}
-                  onChange={handlePageChange}
-                  color="primary"
-                />
-              </Box>
-            )}
+              return (
+                <Box
+                  display="flex"
+                  justifyContent="center"
+                  mt={4}
+                  alignItems="center"
+                  gap={2}
+                  sx={{ width: '100%', flexWrap: 'nowrap', overflowX: 'auto', py: 1 }}
+                >
+                  <Button
+                    variant="outlined"
+                    onClick={() => goToPage(Math.max(1, currentPage - 1))}
+                    disabled={currentPage <= 1}
+                  >
+                    Previous
+                  </Button>
+
+                  <Box sx={{ mx: 1, display: 'flex', alignItems: 'center' }}>
+                    <Pagination
+                      count={totalPages}
+                      page={currentPage}
+                      onChange={handlePageChange}
+                      color="primary"
+                      boundaryCount={1}
+                      siblingCount={1}
+                      shape="rounded"
+                      hidePrevButton
+                      hideNextButton
+                    />
+                  </Box>
+
+                  <Button
+                    variant="outlined"
+                    onClick={() => goToPage(Math.min(totalPages, currentPage + 1))}
+                    disabled={currentPage >= totalPages}
+                  >
+                    Next
+                  </Button>
+                </Box>
+              );
+            })()}
           </>
         )}
       </Container>
-      
+
       {/* Quick Add Dialog */}
       <QuickAddDialog
         open={quickAddOpen}

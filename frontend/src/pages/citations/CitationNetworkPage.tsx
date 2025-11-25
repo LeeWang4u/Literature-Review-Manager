@@ -42,6 +42,7 @@ import {
   FilterList,
   TrendingUp,
   OpenInNew,
+  ArrowBack,
 } from '@mui/icons-material';
 import * as d3 from 'd3';
 import { citationService } from '@/services/citation.service';
@@ -153,18 +154,21 @@ const CitationNetworkPage: React.FC = () => {
   const fetchNestedMutation = useMutation({
     mutationFn: ({ paperId, depth, maxDepth }: { paperId: number; depth: number; maxDepth: number }) =>
       paperService.fetchNestedReferences(paperId, depth, maxDepth),
+    // call single eager endpoint that finds DOI (if missing) then fetches references in one operation
+    // mutationFn: ({ paperId, depth, maxDepth }: { paperId: number; depth: number; maxDepth: number }) =>
+    //   paperService.fetchNestedReferencesEager(paperId, depth, maxDepth),
     onSuccess: (result) => {
       const method = result.stats.method || 'API';
-      const methodIcon = 
-        method === 'Metadata Search' ? '🔍' : 
-        method === 'AI PDF Extraction' ? '🤖' :
-        method === 'AI DOI Finder + API' ? '🤖🔑' :
-        method === 'DOI API' ? '🔑' : 
-        method.includes('Failed') ? '⏳' : '📡';
-      
+      const methodIcon =
+        method === 'Metadata Search' ? '🔍' :
+          method === 'AI PDF Extraction' ? '🤖' :
+            method === 'AI DOI Finder + API' ? '🤖🔑' :
+              method === 'DOI API' ? '🔑' :
+                method.includes('Failed') ? '⏳' : '📡';
+
       let message = `${methodIcon} ${result.message}\n`;
       message += `📊 Found ${result.stats.newReferencesFound} references`;
-      
+
       if (result.stats.updatedDoi) {
         message += `\n✅ Updated DOI: ${result.stats.updatedDoi.substring(0, 30)}...`;
       }
@@ -197,7 +201,7 @@ const CitationNetworkPage: React.FC = () => {
     Object.entries(nodeTypes).forEach(([type, count]) => {
       console.log(`     ${type}: ${count}`);
     });
-    
+
     console.log('   Network depth distribution:');
     const depthDist = network.nodes.reduce((acc: any, node: any) => {
       const depth = node.networkDepth ?? node.citationDepth ?? 0;
@@ -212,7 +216,7 @@ const CitationNetworkPage: React.FC = () => {
     network.nodes.slice(0, 5).forEach((node: any) => {
       console.log(`     [${node.type || 'unknown'}] ${node.id}: "${node.title?.substring(0, 40)}..." year=${node.year} depth=${node.networkDepth ?? node.citationDepth ?? 0}`);
     });
-    
+
     console.log('\n   Sample edges (first 5):');
     network.edges.slice(0, 5).forEach((edge: any) => {
       console.log(`     ${edge.source} → ${edge.target} (depth: ${edge.citationDepth})`);
@@ -226,20 +230,20 @@ const CitationNetworkPage: React.FC = () => {
       // Top references return { citation, paper, score } - use paper.id
       const topRefIds = new Set(analysis.topReferences.map((ref: any) => ref.paper.id));
       const mainPaperId = Number(id);
-      
+
       console.log('Analysis top references:', analysis.topReferences.length);
       console.log('Top ref IDs:', Array.from(topRefIds));
       console.log('Main paper ID:', mainPaperId);
       console.log('Total nodes before filter:', network.nodes.length);
-      
+
       // Keep main paper + top references + their nested references (depth 2+)
       filteredNodes = network.nodes.filter((node: any) => {
         // Always keep main paper
         if (node.id === mainPaperId) return true;
-        
+
         // Keep top references (depth 1)
         if (topRefIds.has(node.id)) return true;
-        
+
         // Keep nested references (depth 2+) that are connected to top references
         const depth = node.networkDepth ?? node.citationDepth ?? 0;
         if (depth >= 2) {
@@ -247,25 +251,25 @@ const CitationNetworkPage: React.FC = () => {
           const hasConnectionToTopRef = network.edges.some((edge: any) => {
             const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
             const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
-            
+
             // This node is cited by a top reference
             if (targetId === node.id && topRefIds.has(sourceId)) return true;
             // This node cites a top reference
             if (sourceId === node.id && topRefIds.has(targetId)) return true;
-            
+
             return false;
           });
-          
+
           return hasConnectionToTopRef;
         }
-        
+
         return false;
       });
-      
+
       console.log('Filtered nodes (with nested):', filteredNodes.length, filteredNodes.map((n: any) => `${n.id}(d${n.networkDepth ?? n.citationDepth ?? 0})`));
-      
+
       const filteredNodeIds = new Set(filteredNodes.map((n: any) => n.id));
-      
+
       console.log('Total edges before filter:', network.edges.length);
       filteredEdges = network.edges.filter((edge: any) => {
         // Handle both number IDs and object references
@@ -273,7 +277,7 @@ const CitationNetworkPage: React.FC = () => {
         const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
         return filteredNodeIds.has(sourceId) && filteredNodeIds.has(targetId);
       });
-      
+
       console.log('Filtered edges:', filteredEdges.length);
     }
 
@@ -468,9 +472,9 @@ const CitationNetworkPage: React.FC = () => {
       .attr('fill', (d: any) => {
         // Prioritize depth-based coloring for better hierarchy visualization
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
-        
+
         if (d.id === Number(id)) return 'url(#current-paper-gradient)';
-        
+
         // Depth-based colors with influence overlay
         if (d.isInfluential) {
           // Influential papers with depth tint
@@ -479,7 +483,7 @@ const CitationNetworkPage: React.FC = () => {
           if (depth === 2) return '#FFA726'; // Orange for depth 2 influential
           return '#FF8A65'; // Coral for depth 3+ influential
         }
-        
+
         // Non-influential papers colored by depth
         if (depth === 0) {
           // Depth 0: Green shades (direct references)
@@ -507,7 +511,7 @@ const CitationNetworkPage: React.FC = () => {
       .attr('stroke', (d: any) => {
         if (d.id === Number(id)) return '#ff1744';
         if (d.isInfluential) return '#ffb300';
-        
+
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
         if (depth === 0) return '#2E7D32'; // Dark green
         if (depth === 1) return '#1565C0'; // Dark blue
@@ -521,7 +525,7 @@ const CitationNetworkPage: React.FC = () => {
         return 2.5;
       })
       .attr('filter', 'url(#node-shadow)')
-      .on('mouseenter', function(this: any, _: any, d: any) {
+      .on('mouseenter', function (this: any, _: any, d: any) {
         d3.select(this)
           .transition()
           .duration(200)
@@ -531,7 +535,7 @@ const CitationNetworkPage: React.FC = () => {
           })
           .attr('stroke-width', 4);
       })
-      .on('mouseleave', function(this: any, _: any, d: any) {
+      .on('mouseleave', function (this: any, _: any, d: any) {
         d3.select(this)
           .transition()
           .duration(200)
@@ -583,11 +587,11 @@ const CitationNetworkPage: React.FC = () => {
     node.append('title')
       .text((d: any) => {
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
-        const depthLabel = depth === 0 ? 'Direct Reference' : 
-                          depth === 1 ? 'Nested Reference (Lv1)' : 
-                          depth === 2 ? 'Deep Reference (Lv2)' : 
-                          `Very Deep Reference (Lv${depth})`;
-        
+        const depthLabel = depth === 0 ? 'Direct Reference' :
+          depth === 1 ? 'Nested Reference (Lv1)' :
+            depth === 2 ? 'Deep Reference (Lv2)' :
+              `Very Deep Reference (Lv${depth})`;
+
         const parts = [
           `📄 ${d.title || 'Untitled'}`,
           '',
@@ -721,7 +725,7 @@ const CitationNetworkPage: React.FC = () => {
       const svg = d3.select(svgRef.current);
       const zoom = (svg as any).zoomBehavior;
       const simulation = (svg as any).simulation;
-      
+
       if (zoom) svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
       if (simulation) simulation.alpha(1).restart();
     }
@@ -744,8 +748,31 @@ const CitationNetworkPage: React.FC = () => {
   }
 
   return (
-    <Container maxWidth="xl">
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={2}>
+    // <Container maxWidth="xl">
+    <Container maxWidth="xl" sx={{ position: 'relative' }}>
+      {/* Back button top-left */}
+      <Box sx={{ position: 'absolute', top: 12, left: 12, zIndex: 1300 }}>
+        <Tooltip title="Back">
+          <IconButton
+            onClick={() => navigate(-1)}
+            aria-label="back"
+            size="large"
+            sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
+          >
+            <ArrowBack />
+          </IconButton>
+        </Tooltip>
+      </Box>
+      {/* <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={2}> */}
+      <Box
+        display="flex"
+        justifyContent="space-between"
+        alignItems="center"
+        mb={2}
+        flexWrap="wrap"
+        gap={2}
+        sx={{ pl: 6 }} // shift header right so Back button doesn't overlap
+      >
         <Box>
           <Typography variant="h4">Citation Network</Typography>
           {network && network.nodes && (
@@ -754,48 +781,9 @@ const CitationNetworkPage: React.FC = () => {
             </Typography>
           )}
         </Box>
-        
+
         <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
-          <Button
-            variant={showTopOnly ? "contained" : "outlined"}
-            startIcon={<FilterList />}
-            onClick={() => setShowTopOnly(!showTopOnly)}
-            color={showTopOnly ? "primary" : "inherit"}
-          >
-            {showTopOnly ? `Top ${analysisLimit} Only` : 'Show All'}
-          </Button>
 
-          <Button
-            variant="contained"
-            startIcon={autoRateAllMutation.isPending ? <CircularProgress size={20} /> : <Psychology />}
-            onClick={() => autoRateAllMutation.mutate()}
-            disabled={autoRateAllMutation.isPending}
-            sx={{
-              background: 'linear-gradient(45deg, #9c27b0 30%, #e91e63 90%)',
-              color: 'white',
-              '&:hover': {
-                background: 'linear-gradient(45deg, #7b1fa2 30%, #c2185b 90%)',
-              },
-            }}
-          >
-            {autoRateAllMutation.isPending ? 'AI Rating...' : '🤖 AI Rate All'}
-          </Button>
-
-          <Button
-            variant="contained"
-            startIcon={fetchNestedMutation.isPending ? <CircularProgress size={20} /> : <AccountTree />}
-            onClick={() => fetchNestedMutation.mutate({ paperId: Number(id), depth: 1, maxDepth: 2 })}
-            disabled={fetchNestedMutation.isPending}
-            sx={{
-              background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-              color: 'white',
-              '&:hover': {
-                background: 'linear-gradient(45deg, #1976D2 30%, #00ACC1 90%)',
-              },
-            }}
-          >
-            {fetchNestedMutation.isPending ? 'Fetching...' : '🔗 Fetch Nested Refs'}
-          </Button>
 
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Depth</InputLabel>
@@ -812,52 +800,85 @@ const CitationNetworkPage: React.FC = () => {
         </Box>
       </Box>
 
-      {/* Reference Analysis Section */}
-      {showTopOnly && (
-        <Card sx={{ mb: 2, bgcolor: '#f5f5f5' }}>
-          <CardContent>
-            <Box display="flex" alignItems="center" gap={1} mb={2}>
-              <TrendingUp color="primary" />
-              <Typography variant="h6">Top References Analysis</Typography>
-              {analysisLoading && <CircularProgress size={20} />}
-            </Box>
-            
-            {analysis ? (
-              <>
-                <Stack direction="row" spacing={2} mb={2} flexWrap="wrap">
-                  <Chip
-                    icon={<Star />}
-                    label={`${analysis.topReferences?.length || 0} Top References`}
-                    color="primary"
-                  />
-                  {analysis.highPriorityCount > 0 && (
-                    <Chip
-                      icon={<TrendingUp />}
-                      label={`${analysis.highPriorityCount} High Priority`}
-                      color="success"
-                    />
-                  )}
-                  {analysis.recommendedDownloads > 0 && (
-                    <Chip
-                      label={`${analysis.recommendedDownloads} Recommended Downloads`}
-                      color="warning"
-                    />
-                  )}
-                </Stack>
+      <Paper elevation={0} sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
+        <Typography variant="subtitle2" gutterBottom>
+          Legend
+        </Typography>
 
-                <Typography variant="body2" color="text.secondary">
-                  Network filtered to show only the most relevant references based on:
-                  Relevance (40%) + Influential Status (30%) + Citation Count (30%)
-                </Typography>
-              </>
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                Loading analysis...
-              </Typography>
-            )}
-          </CardContent>
-        </Card>
-      )}
+        {/* Depth-based colors */}
+        <Typography variant="caption" color="textSecondary" gutterBottom display="block">
+          Citation Depth:
+        </Typography>
+        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap mb={2}>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ color: '#dc004e', fontSize: 22 }} />
+            <Typography variant="body2">Main Paper</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ color: '#4CAF50', fontSize: 18 }} />
+            <Typography variant="body2">Depth 0 (Direct)</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ color: '#2196F3', fontSize: 18 }} />
+            <Typography variant="body2">Depth 1 (Nested)</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ color: '#9C27B0', fontSize: 18 }} />
+            <Typography variant="body2">Depth 2 (Deep)</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ color: '#90A4AE', fontSize: 16 }} />
+            <Typography variant="body2">Depth 3+</Typography>
+          </Box>
+        </Stack>
+
+        {/* Relevance scores */}
+        <Typography variant="caption" color="textSecondary" gutterBottom display="block">
+          Relevance (darker = higher score):
+        </Typography>
+        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap mb={2}>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ color: '#ffd700', fontSize: 20, filter: 'drop-shadow(0 0 3px #ff8c00)' }} />
+            <Typography variant="body2">⭐ Influential</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ fontSize: 18 }}>
+              <svg width="18" height="18">
+                <circle cx="9" cy="9" r="8" fill="#4caf50" />
+              </svg>
+            </Circle>
+            <Typography variant="body2">80-100%</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ fontSize: 18 }}>
+              <svg width="18" height="18">
+                <circle cx="9" cy="9" r="8" fill="#66BB6A" />
+              </svg>
+            </Circle>
+            <Typography variant="body2">60-80%</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ fontSize: 18 }}>
+              <svg width="18" height="18">
+                <circle cx="9" cy="9" r="8" fill="#81C784" />
+              </svg>
+            </Circle>
+            <Typography variant="body2">40-60%</Typography>
+          </Box>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Circle sx={{ fontSize: 18 }}>
+              <svg width="18" height="18">
+                <circle cx="9" cy="9" r="8" fill="#A5D6A7" />
+              </svg>
+            </Circle>
+            <Typography variant="body2">&lt;40%</Typography>
+          </Box>
+        </Stack>
+
+        <Alert severity="info" sx={{ mt: 2 }}>
+          <strong>Tip:</strong> Click papers to rate • Drag to rearrange • Scroll to zoom • Use "Fetch Nested Refs" to load deeper levels
+        </Alert>
+      </Paper>
 
       <Box display="flex" gap={2} mb={2} flexWrap="wrap">
         <Chip
@@ -896,133 +917,54 @@ const CitationNetworkPage: React.FC = () => {
       </Box>
 
       <Paper elevation={3} sx={{ p: 0, position: 'relative', overflow: 'hidden' }}>
-          <Box
-            position="absolute"
-            top={16}
-            right={16}
-            zIndex={1}
-            display="flex"
-            flexDirection="column"
-            gap={1}
-          >
-            <Tooltip title="Zoom In" placement="left">
-              <IconButton
-                onClick={handleZoomIn}
-                sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
-              >
-                <ZoomIn />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Zoom Out" placement="left">
-              <IconButton
-                onClick={handleZoomOut}
-                sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
-              >
-                <ZoomOut />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Reset View" placement="left">
-              <IconButton
-                onClick={handleResetView}
-                sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
-              >
-                <RestartAlt />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={showLabels ? 'Hide Labels' : 'Show Labels'} placement="left">
-              <IconButton
-                onClick={() => setShowLabels(!showLabels)}
-                sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
-              >
-                <Visibility />
-              </IconButton>
-            </Tooltip>
-          </Box>
+        <Box
+          position="absolute"
+          top={16}
+          right={16}
+          zIndex={1}
+          display="flex"
+          flexDirection="column"
+          gap={1}
+        >
+          <Tooltip title="Zoom In" placement="left">
+            <IconButton
+              onClick={handleZoomIn}
+              sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
+            >
+              <ZoomIn />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Zoom Out" placement="left">
+            <IconButton
+              onClick={handleZoomOut}
+              sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
+            >
+              <ZoomOut />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Reset View" placement="left">
+            <IconButton
+              onClick={handleResetView}
+              sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
+            >
+              <RestartAlt />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title={showLabels ? 'Hide Labels' : 'Show Labels'} placement="left">
+            <IconButton
+              onClick={() => setShowLabels(!showLabels)}
+              sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
+            >
+              <Visibility />
+            </IconButton>
+          </Tooltip>
+        </Box>
 
-          <Box ref={containerRef} display="flex" justifyContent="center" sx={{ bgcolor: '#fafafa' }}>
-            <svg ref={svgRef}></svg>
-          </Box>
+        <Box ref={containerRef} display="flex" justifyContent="center" sx={{ bgcolor: '#fafafa' }}>
+          <svg ref={svgRef}></svg>
+        </Box>
 
-          <Paper elevation={0} sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Legend
-            </Typography>
-            
-            {/* Depth-based colors */}
-            <Typography variant="caption" color="textSecondary" gutterBottom display="block">
-              Citation Depth:
-            </Typography>
-            <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap mb={2}>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#dc004e', fontSize: 22 }} />
-                <Typography variant="body2">Main Paper</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#4CAF50', fontSize: 18 }} />
-                <Typography variant="body2">Depth 0 (Direct)</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#2196F3', fontSize: 18 }} />
-                <Typography variant="body2">Depth 1 (Nested)</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#9C27B0', fontSize: 18 }} />
-                <Typography variant="body2">Depth 2 (Deep)</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#90A4AE', fontSize: 16 }} />
-                <Typography variant="body2">Depth 3+</Typography>
-              </Box>
-            </Stack>
-
-            {/* Relevance scores */}
-            <Typography variant="caption" color="textSecondary" gutterBottom display="block">
-              Relevance (darker = higher score):
-            </Typography>
-            <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap mb={2}>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ color: '#ffd700', fontSize: 20, filter: 'drop-shadow(0 0 3px #ff8c00)' }} />
-                <Typography variant="body2">⭐ Influential</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ fontSize: 18 }}>
-                  <svg width="18" height="18">
-                    <circle cx="9" cy="9" r="8" fill="#4caf50" />
-                  </svg>
-                </Circle>
-                <Typography variant="body2">80-100%</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ fontSize: 18 }}>
-                  <svg width="18" height="18">
-                    <circle cx="9" cy="9" r="8" fill="#66BB6A" />
-                  </svg>
-                </Circle>
-                <Typography variant="body2">60-80%</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ fontSize: 18 }}>
-                  <svg width="18" height="18">
-                    <circle cx="9" cy="9" r="8" fill="#81C784" />
-                  </svg>
-                </Circle>
-                <Typography variant="body2">40-60%</Typography>
-              </Box>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Circle sx={{ fontSize: 18 }}>
-                  <svg width="18" height="18">
-                    <circle cx="9" cy="9" r="8" fill="#A5D6A7" />
-                  </svg>
-                </Circle>
-                <Typography variant="body2">&lt;40%</Typography>
-              </Box>
-            </Stack>
-
-            <Alert severity="info" sx={{ mt: 2 }}>
-              <strong>Tip:</strong> Click papers to rate • Drag to rearrange • Scroll to zoom • Use "Fetch Nested Refs" to load deeper levels
-            </Alert>
-          </Paper>
-        </Paper>
+      </Paper>
 
       <Drawer
         anchor="right"
@@ -1076,8 +1018,8 @@ const CitationNetworkPage: React.FC = () => {
                       <Typography variant="subtitle2" color="textSecondary" gutterBottom sx={{ mt: 2 }}>
                         📝 Citation Context / Note
                       </Typography>
-                      <Typography 
-                        variant="body2" 
+                      <Typography
+                        variant="body2"
                         gutterBottom
                         sx={{
                           p: 1.5,
@@ -1098,7 +1040,7 @@ const CitationNetworkPage: React.FC = () => {
                     <Typography variant="subtitle2" color="textSecondary" gutterBottom>
                       Citation Depth
                     </Typography>
-                    <Chip 
+                    <Chip
                       label={(() => {
                         const depth = selectedNode.networkDepth ?? selectedNode.citationDepth ?? 0;
                         if (depth === 0) return 'Direct Reference';
@@ -1116,7 +1058,7 @@ const CitationNetworkPage: React.FC = () => {
                       })()}
                     />
                   </Box>
-                  
+
                   <Box flex={1}>
                     <Typography variant="subtitle2" color="textSecondary" gutterBottom>
                       Year
@@ -1131,9 +1073,9 @@ const CitationNetworkPage: React.FC = () => {
                     <Typography variant="subtitle2" color="textSecondary" gutterBottom>
                       🔑 DOI
                     </Typography>
-                    <Box 
-                      sx={{ 
-                        p: 1, 
+                    <Box
+                      sx={{
+                        p: 1,
                         bgcolor: 'rgba(76, 175, 80, 0.08)',
                         borderRadius: 1,
                         border: '1px solid rgba(76, 175, 80, 0.3)',
@@ -1142,9 +1084,9 @@ const CitationNetworkPage: React.FC = () => {
                         gap: 1,
                       }}
                     >
-                      <Typography 
-                        variant="body2" 
-                        sx={{ 
+                      <Typography
+                        variant="body2"
+                        sx={{
                           fontFamily: 'monospace',
                           fontSize: '0.85rem',
                           wordBreak: 'break-all',
@@ -1153,7 +1095,7 @@ const CitationNetworkPage: React.FC = () => {
                       >
                         {selectedNode.doi}
                       </Typography>
-                      <IconButton 
+                      <IconButton
                         size="small"
                         onClick={() => {
                           window.open(`https://doi.org/${selectedNode.doi}`, '_blank');
@@ -1173,21 +1115,21 @@ const CitationNetworkPage: React.FC = () => {
                     </Typography>
                     {selectedNode.relevanceScore ? (
                       <Box display="flex" alignItems="center" gap={1}>
-                        <Chip 
+                        <Chip
                           label={`${(selectedNode.relevanceScore * 100).toFixed(0)}%`}
                           size="small"
                           sx={{
-                            bgcolor: selectedNode.relevanceScore >= 0.8 ? '#4caf50' : 
-                                     selectedNode.relevanceScore >= 0.6 ? '#8bc34a' :
-                                     selectedNode.relevanceScore >= 0.4 ? '#ffc107' : '#ff9800',
+                            bgcolor: selectedNode.relevanceScore >= 0.8 ? '#4caf50' :
+                              selectedNode.relevanceScore >= 0.6 ? '#8bc34a' :
+                                selectedNode.relevanceScore >= 0.4 ? '#ffc107' : '#ff9800',
                             color: '#fff',
                             fontWeight: 'bold',
                           }}
                         />
-                        <Rating 
-                          value={selectedNode.relevanceScore * 5} 
+                        <Rating
+                          value={selectedNode.relevanceScore * 5}
                           precision={0.1}
-                          readOnly 
+                          readOnly
                           size="small"
                         />
                       </Box>
@@ -1251,10 +1193,10 @@ const CitationNetworkPage: React.FC = () => {
                     fullWidth
                     startIcon={fetchNestedMutation.isPending ? <CircularProgress size={20} /> : <AccountTree />}
                     onClick={() => {
-                      fetchNestedMutation.mutate({ 
-                        paperId: selectedNode.id, 
-                        depth: 1, 
-                        maxDepth: 2 
+                      fetchNestedMutation.mutate({
+                        paperId: selectedNode.id,
+                        depth: 1,
+                        maxDepth: 2
                       });
                     }}
                     disabled={fetchNestedMutation.isPending}
@@ -1322,7 +1264,7 @@ const CitationNetworkPage: React.FC = () => {
                       <Typography variant="subtitle1" gutterBottom fontWeight="bold" color="primary">
                         ⭐ Rate Relevance
                       </Typography>
-                      
+
                       <Box display="flex" flexDirection="column" gap={2} mt={2}>
                         <Box>
                           <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
@@ -1333,10 +1275,10 @@ const CitationNetworkPage: React.FC = () => {
                               label={`${(tempRelevance * 100).toFixed(0)}%`}
                               size="small"
                               sx={{
-                                bgcolor: tempRelevance >= 0.8 ? '#4caf50' : 
-                                         tempRelevance >= 0.6 ? '#8bc34a' :
-                                         tempRelevance >= 0.4 ? '#ffc107' : 
-                                         tempRelevance > 0 ? '#ff9800' : '#999',
+                                bgcolor: tempRelevance >= 0.8 ? '#4caf50' :
+                                  tempRelevance >= 0.6 ? '#8bc34a' :
+                                    tempRelevance >= 0.4 ? '#ffc107' :
+                                      tempRelevance > 0 ? '#ff9800' : '#999',
                                 color: '#fff',
                                 fontWeight: 'bold',
                                 fontSize: '0.9rem',
@@ -1363,10 +1305,10 @@ const CitationNetworkPage: React.FC = () => {
                           </Box>
                           <Typography variant="caption" color="textSecondary" align="center" display="block">
                             {tempRelevance === 0 ? 'Not relevant' :
-                             tempRelevance < 0.4 ? 'Low relevance' :
-                             tempRelevance < 0.6 ? 'Medium relevance' :
-                             tempRelevance < 0.8 ? 'Good relevance' :
-                             'High relevance'}
+                              tempRelevance < 0.4 ? 'Low relevance' :
+                                tempRelevance < 0.6 ? 'Medium relevance' :
+                                  tempRelevance < 0.8 ? 'Good relevance' :
+                                    'High relevance'}
                           </Typography>
                         </Box>
 
@@ -1420,13 +1362,13 @@ const CitationNetworkPage: React.FC = () => {
             {selectedNode && selectedNode.id !== Number(id) && (
               <>
                 <Divider sx={{ my: 3 }} />
-                
+
                 <Box>
                   <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     📚 References of this Paper
                     {loadingNodeRefs && <CircularProgress size={20} />}
                   </Typography>
-                  
+
                   {loadingNodeRefs ? (
                     <Box display="flex" justifyContent="center" py={3}>
                       <CircularProgress />
@@ -1436,13 +1378,13 @@ const CitationNetworkPage: React.FC = () => {
                       <Typography variant="body2" color="text.secondary" gutterBottom>
                         This paper cites {selectedNodeReferences.length} other paper(s):
                       </Typography>
-                      
+
                       <Stack spacing={1.5} mt={2}>
                         {selectedNodeReferences.slice(0, 10).map((ref: any) => (
-                          <Card 
-                            key={ref.id} 
-                            variant="outlined" 
-                            sx={{ 
+                          <Card
+                            key={ref.id}
+                            variant="outlined"
+                            sx={{
                               cursor: 'pointer',
                               transition: 'all 0.2s',
                               '&:hover': {
@@ -1463,33 +1405,33 @@ const CitationNetworkPage: React.FC = () => {
                                   <Typography variant="body2" fontWeight="medium" gutterBottom>
                                     {ref.citedPaper?.title || 'Unknown Title'}
                                   </Typography>
-                                  
+
                                   <Box display="flex" gap={1} flexWrap="wrap" mt={0.5}>
                                     {ref.citedPaper?.year && (
-                                      <Chip 
-                                        label={ref.citedPaper.year} 
-                                        size="small" 
+                                      <Chip
+                                        label={ref.citedPaper.year}
+                                        size="small"
                                         variant="outlined"
                                         sx={{ height: 20, fontSize: '0.7rem' }}
                                       />
                                     )}
-                                    
+
                                     {ref.relevanceScore && (
-                                      <Chip 
+                                      <Chip
                                         label={`${(ref.relevanceScore * 100).toFixed(0)}%`}
                                         size="small"
                                         sx={{
                                           height: 20,
                                           fontSize: '0.7rem',
-                                          bgcolor: ref.relevanceScore >= 0.7 ? '#4caf50' : 
-                                                   ref.relevanceScore >= 0.5 ? '#8bc34a' : '#ffc107',
+                                          bgcolor: ref.relevanceScore >= 0.7 ? '#4caf50' :
+                                            ref.relevanceScore >= 0.5 ? '#8bc34a' : '#ffc107',
                                           color: '#fff',
                                         }}
                                       />
                                     )}
-                                    
+
                                     {ref.isInfluential && (
-                                      <Chip 
+                                      <Chip
                                         label="⭐ Influential"
                                         size="small"
                                         sx={{
@@ -1501,12 +1443,12 @@ const CitationNetworkPage: React.FC = () => {
                                       />
                                     )}
                                   </Box>
-                                  
+
                                   {ref.citationContext && (
-                                    <Typography 
-                                      variant="caption" 
-                                      color="text.secondary" 
-                                      sx={{ 
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                      sx={{
                                         display: '-webkit-box',
                                         WebkitLineClamp: 2,
                                         WebkitBoxOrient: 'vertical',
@@ -1523,14 +1465,14 @@ const CitationNetworkPage: React.FC = () => {
                             </CardContent>
                           </Card>
                         ))}
-                        
+
                         {selectedNodeReferences.length > 10 && (
                           <Typography variant="caption" color="text.secondary" textAlign="center">
                             ... and {selectedNodeReferences.length - 10} more references
                           </Typography>
                         )}
                       </Stack>
-                      
+
                       <Button
                         variant="outlined"
                         fullWidth
@@ -1547,7 +1489,7 @@ const CitationNetworkPage: React.FC = () => {
                     </>
                   ) : (
                     <Alert severity="info" sx={{ mt: 2 }}>
-                      No references found for this paper. 
+                      No references found for this paper.
                       {selectedNode.isReference && (
                         <Typography variant="caption" display="block" mt={1}>
                           This is a reference paper. References will be automatically fetched if this paper has high priority.

@@ -1,4 +1,7 @@
-import React, { useState, useMemo } from 'react';
+
+
+
+import React, { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -24,6 +27,9 @@ import {
   Alert,
   Snackbar,
   Paper as MuiPaper,
+  Pagination,
+  TextField,
+  InputAdornment,
 } from '@mui/material';
 import {
   Visibility,
@@ -32,9 +38,16 @@ import {
   ArrowBack,
   Star,
   StarBorder,
+  Search as SearchIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import { libraryService } from '@/services/library.service';
 import { LibraryItem } from '@/types';
+
+interface LibraryResponse {
+  items: LibraryItem[];
+  total: number;
+}
 
 const getStatusLabel = (status: string): string => {
   return status.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
@@ -74,38 +87,56 @@ const LibraryPage: React.FC = () => {
     severity: 'success',
   });
 
+  const [page, setPage] = useState<number>(1);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
+  const pageSize = 8; // Number of papers per page
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // Queries
   const { data: stats } = useQuery({
     queryKey: ['library-statistics'],
     queryFn: () => libraryService.getStatistics(),
   });
 
-  // const { data: library, isLoading } = useQuery({
-  //   queryKey: ['library', currentTab],
-  //   queryFn: async () => {
-  //     console.log(`📚 Fetching library data for tab: ${currentTab}...`);
-  //     const statusToFetch = currentTab === 'favorites' ? undefined : currentTab;
-  //     const result = await libraryService.getLibrary(statusToFetch);
-  //     console.log(`✅ Library data received for ${currentTab}:`, result);
-  //     return result;
-  //   },
-  // });
+  const { data: libraryData, isLoading } = useQuery<LibraryResponse>({
+    queryKey: ['library', currentTab, page, debouncedSearchQuery],
+    queryFn: async () => {
+      console.log(`📚 Fetching library data for tab: ${currentTab}...`);
+      const statusToFetch = currentTab === 'favorites' ? undefined : currentTab;
+      const favoriteToFetch = currentTab === 'favorites' ? true : undefined;
 
-  const { data: library, isLoading } = useQuery({
-  queryKey: ['library', currentTab],
-  queryFn: async () => {
-    console.log(`📚 Fetching library data for tab: ${currentTab}...`);
-    const statusToFetch = currentTab === 'favorites' ? undefined : currentTab;
-    const favoriteToFetch = currentTab === 'favorites' ? true : undefined;
+      const result = await libraryService.getLibrary({
+        status: statusToFetch,
+        favorite: favoriteToFetch,
+        page,
+        pageSize,
+        search: debouncedSearchQuery || undefined,
+      });
+      console.log(`✅ Library data received for ${currentTab}:`, result);
+      return result as unknown as LibraryResponse;
+    },
+    placeholderData: (previousData) => previousData,
+  });
 
-    const result = await libraryService.getLibrary({
-      status: statusToFetch,
-      favorite: favoriteToFetch,
-    });
-    console.log(`✅ Library data received for ${currentTab}:`, result);
-    return result;
-  },
-});
+  const library = libraryData?.items || [];
+  const count = libraryData?.total || 0;
+  const totalPages = Math.ceil(count / pageSize);
+
+  const handlePageChange = (_event: React.ChangeEvent<unknown>, value: number) => {
+    setPage(value);
+  };
+
+  useEffect(() => {
+    setPage(1);
+  }, [currentTab, debouncedSearchQuery]);
 
   console.log('📊 Library Page State:', { library, isLoading, currentTab });
 
@@ -147,18 +178,6 @@ const LibraryPage: React.FC = () => {
       showSnackbar('Failed to remove from library', 'error');
     },
   });
-
-  const filteredLibrary = useMemo(() => {
-    if (!library) return [];
-
-    if (currentTab === 'favorites') {
-      // Lọc dựa trên thuộc tính favorite của paper lồng bên trong
-      return library.filter((item) => item.paper && item.paper.favorite);
-    }
-
-    // Backend đã lọc theo status của paper, chỉ cần trả về
-    return library;
-  }, [library, currentTab]);
 
   const tabs: TabValue[] = useMemo(() => {
     const statusTabs = Object.entries(stats?.byStatus || {}).map(([value, count]) => ({
@@ -204,14 +223,6 @@ const LibraryPage: React.FC = () => {
     }
   };
 
-  if (isLoading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-        <CircularProgress />
-      </Box>
-    );
-  }
-
   return (
     <Container maxWidth="lg">
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
@@ -253,119 +264,157 @@ const LibraryPage: React.FC = () => {
         </Tabs>
       </MuiPaper>
 
-      <Grid container spacing={3}>
-        {filteredLibrary.map((item) => (
-          <Grid item xs={12} md={6} key={item.id}>
-            <Card>
-              <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="start" mb={2}>
-                  <Typography variant="h6" gutterBottom sx={{ flex: 1, pr: 2 }}>
-                    {item.paper.title}
-                  </Typography>
-                  <Chip
-                    label={getStatusLabel(item.paper.status)}
-                    color={getStatusColor(item.paper.status)}
-                    size="small"
-                  />
-                </Box>
-
-                <Typography color="textSecondary" variant="body2" gutterBottom>
-                  {item.paper.authors}
-                </Typography>
-
-                <Typography variant="body2" gutterBottom>
-                  {item.paper.publicationYear}
-                  {item.paper.journal && ` • ${item.paper.journal}`}
-                </Typography>
-
-                <Box mt={2} mb={2}>
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
-                    <Typography variant="caption" color="textSecondary">Reading Progress</Typography>
-                    <Typography variant="caption" color="textSecondary">{calculateProgress(item)}%</Typography>
-                  </Box>
-                  <LinearProgress
-                    variant="determinate"
-                    value={calculateProgress(item)}
-                    sx={{ height: 6, borderRadius: 1 }}
-                  />
-                </Box>
-
-                {item.paper.tags && item.paper.tags.length > 0 && (
-                  <Box mt={2} display="flex" flexWrap="wrap" gap={0.5}>
-                    {item.paper.tags.map((tag) => (
-                      <Chip
-                        key={tag.id}
-                        label={tag.name}
-                        size="small"
-                        sx={{ bgcolor: tag.color || 'grey.300', color: 'white' }}
-                      />
-                    ))}
-                  </Box>
-                )}
-              </CardContent>
-
-              <CardActions sx={{ justifyContent: 'space-between', px: 2 }}>
-                <Button
-                  size="small"
-                  startIcon={<Visibility />}
-                  onClick={() => navigate(`/papers/${item.paper.id}`)}
+      <Box mb={3}>
+        <TextField
+          fullWidth
+          label="Search in this category"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            ),
+            endAdornment: searchQuery && (
+              <InputAdornment position="end">
+                <IconButton
+                  onClick={() => setSearchQuery('')}
+                  edge="end"
                 >
-                  View Paper
-                </Button>
+                  <ClearIcon />
+                </IconButton>
+              </InputAdornment>
+            ),
+          }}
+        />
+      </Box>
 
-                <Box>
-                  {/* <Tooltip title="Change Status">
-                    <IconButton
+      {isLoading ? (
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+          <CircularProgress />
+        </Box>
+      ) : (
+        <>
+          <Grid container spacing={3}>
+            {library.map((item) => (
+              <Grid item xs={12} md={6} key={item.id}>
+                <Card>
+                  <CardContent>
+                    <Box display="flex" justifyContent="space-between" alignItems="start" mb={2}>
+                      <Typography variant="h6" gutterBottom sx={{ flex: 1, pr: 2 }}>
+                        {item.paper.title}
+                      </Typography>
+                      <Chip
+                        label={getStatusLabel(item.paper.status)}
+                        color={getStatusColor(item.paper.status)}
+                        size="small"
+                      />
+                    </Box>
+
+                    <Typography color="textSecondary" variant="body2" gutterBottom>
+                      {item.paper.authors}
+                    </Typography>
+
+                    <Typography variant="body2" gutterBottom>
+                      {item.paper.publicationYear}
+                      {item.paper.journal && ` • ${item.paper.journal}`}
+                    </Typography>
+
+                    <Box mt={2} mb={2}>
+                      <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
+                        <Typography variant="caption" color="textSecondary">Reading Progress</Typography>
+                        <Typography variant="caption" color="textSecondary">{calculateProgress(item)}%</Typography>
+                      </Box>
+                      <LinearProgress
+                        variant="determinate"
+                        value={calculateProgress(item)}
+                        sx={{ height: 6, borderRadius: 1 }}
+                      />
+                    </Box>
+
+                    {item.paper.tags && item.paper.tags.length > 0 && (
+                      <Box mt={2} display="flex" flexWrap="wrap" gap={0.5}>
+                        {item.paper.tags.map((tag) => (
+                          <Chip
+                            key={tag.id}
+                            label={tag.name}
+                            size="small"
+                            sx={{ bgcolor: tag.color || 'grey.300', color: 'white' }}
+                          />
+                        ))}
+                      </Box>
+                    )}
+                  </CardContent>
+
+                  <CardActions sx={{ justifyContent: 'space-between', px: 2 }}>
+                    <Button
                       size="small"
-                      onClick={(e) => setStatusMenuAnchor({ anchor: e.currentTarget, itemId: item.id })}
+                      startIcon={<Visibility />}
+                      onClick={() => navigate(`/papers/${item.paper.id}`)}
                     >
-                      <Edit fontSize="small" />
-                    </IconButton>
-                  </Tooltip> */}
-                  <Tooltip title={item.paper.favorite ? 'Remove from Favorites' : 'Add to Favorites'}>
-                    <IconButton
-                      size="small"
-                      onClick={() =>
-                        toggleFavoriteMutation.mutate({ id: item.id, favorite: !item.paper.favorite })
-                      }
-                    >
-                      {item.paper.favorite ? <Star color="warning" fontSize="small" /> : <StarBorder fontSize="small" />}
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Remove from Library">
-                    <IconButton
-                      size="small"
-                      color="error"
-                      onClick={() => handleRemoveFromLibrary(item.id)}
-                    >
-                      <Delete fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-              </CardActions>
-            </Card>
+                      View Paper
+                    </Button>
+
+                    <Box>
+                      {/* <Tooltip title="Change Status">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => setStatusMenuAnchor({ anchor: e.currentTarget, itemId: item.id })}
+                        >
+                          <Edit fontSize="small" />
+                        </IconButton>
+                      </Tooltip> */}
+                      <Tooltip title={item.paper.favorite ? 'Remove from Favorites' : 'Add to Favorites'}>
+                        <IconButton
+                          size="small"
+                          onClick={() =>
+                            toggleFavoriteMutation.mutate({ id: item.id, favorite: !item.paper.favorite })
+                          }
+                        >
+                          {item.paper.favorite ? <Star color="warning" fontSize="small" /> : <StarBorder fontSize="small" />}
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Remove from Library">
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => handleRemoveFromLibrary(item.id)}
+                        >
+                          <Delete fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  </CardActions>
+                </Card>
+              </Grid>
+            ))}
           </Grid>
-        ))}
-      </Grid>
 
-      {filteredLibrary.length === 0 && !isLoading && (
-        <Box textAlign="center" py={8}>
-          <Typography variant="h6" color="textSecondary" gutterBottom>
-            No papers in this category
-          </Typography>
-        </Box>
-      )}
+          {totalPages > 1 && (
+            <Box display="flex" justifyContent="center" mt={3}>
+              <Pagination count={totalPages} page={page} onChange={handlePageChange} />
+            </Box>
+          )}
 
-      {library?.length === 0 && !isLoading && (
-        <Box textAlign="center" py={8}>
-          <Typography variant="h6" color="textSecondary" gutterBottom>Your library is empty</Typography>
-          <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-            Start building your research library by adding papers
-          </Typography>
-          <Button variant="contained" onClick={() => navigate('/papers')}>
-            Browse Papers
-          </Button>
-        </Box>
+          {library.length === 0 && (
+            <Box textAlign="center" py={8}>
+              <Typography variant="h6" color="textSecondary" gutterBottom>
+                {searchQuery ? 'No papers match your search in this category' : 'No papers in this category'}
+              </Typography>
+              {!searchQuery && (
+                <>
+                  <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                    Start building your research library by adding papers
+                  </Typography>
+                  <Button variant="contained" onClick={() => navigate('/papers')}>
+                    Browse Papers
+                  </Button>
+                </>
+              )}
+            </Box>
+          )}
+        </>
       )}
 
       <Menu
@@ -408,4 +457,3 @@ const LibraryPage: React.FC = () => {
 };
 
 export default LibraryPage;
-

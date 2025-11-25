@@ -19,6 +19,8 @@ import {
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { libraryService } from '@/services/library.service';
+import PieChart from './PieChart';
+import PapersByYearChart from './PapersByYearChart';
 
 const DashboardPage: React.FC = () => {
   const { data: paperStats, isLoading: loadingPaperStats } = useQuery({
@@ -26,10 +28,19 @@ const DashboardPage: React.FC = () => {
     queryFn: () => paperService.getStatistics(),
   });
 
+
+
   const { data: libraryStats, isLoading: loadingLibraryStats } = useQuery({
     queryKey: ['libraryStatistics'],
     queryFn: () => libraryService.getStatistics(),
   });
+
+  const { data: libraryCountByStatus } = useQuery({
+    queryKey: ['libraryCountByStatus'],
+    queryFn: () => libraryService.countByStatus(),
+  });
+
+  // console.log('Library Count By Status:', libraryCountByStatus?.to_read);
 
   const isLoading = loadingPaperStats || loadingLibraryStats;
 
@@ -58,13 +69,13 @@ const DashboardPage: React.FC = () => {
     },
     {
       title: 'Reading',
-      value: libraryStats?.reading || 0,
+      value: libraryCountByStatus?.reading || 0,
       icon: <TrendingUp fontSize="large" color="success" />,
       color: '#2e7d32',
     },
     {
       title: 'Completed',
-      value: libraryStats?.completed || 0,
+      value: libraryCountByStatus?.completed || 0,
       icon: <AccountTree fontSize="large" color="warning" />,
       color: '#ed6c02',
     },
@@ -99,13 +110,29 @@ const DashboardPage: React.FC = () => {
           ))}
         </Grid>
 
+        <Box sx={{ mt: 4 }}> {/* tăng mt tùy ý, ví dụ 6 hoặc 8 */}
+          <PieChart
+            to_read={libraryCountByStatus?.to_read || 0}
+            reading={libraryCountByStatus?.reading || 0}
+            completed={libraryCountByStatus?.completed || 0}
+          />
+        </Box>
+        <Box sx={{ mt: 4 }}>
+          <PapersByYearChart data={ paperStats?.byYear
+        ? paperStats.byYear.map(item => ({
+              year: Number(item.year),
+              count: Number(item.count),
+          })): []} />
+        </Box>
+
+
         <Box sx={{ mt: 4 }}>
           <Alert severity="info">
             Welcome to Literature Review Manager! Start by adding papers or exploring your library.
           </Alert>
         </Box>
       </Container>
-    </MainLayout>
+    </MainLayout >
   );
 };
 
