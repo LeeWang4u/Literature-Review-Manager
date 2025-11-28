@@ -47,4 +47,7 @@ export class RegisterDto {
   @IsString()
   @IsOptional()
   researchInterests?: string;
+
+   @IsOptional()
+  isActive?: boolean;
 }

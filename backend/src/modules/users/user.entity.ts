@@ -54,6 +54,10 @@ export class User {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
+  @Column({ name: 'google_id', length: 255, nullable: true })
+  @Index()
+  googleId: string;
+
   // Relations
   @OneToMany(() => Paper, (paper) => paper.user)
   papers: Paper[];

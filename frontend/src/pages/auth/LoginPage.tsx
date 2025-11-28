@@ -48,6 +48,11 @@ const LoginPage: React.FC = () => {
     }
   };
 
+  const handleGoogleLogin = () => {
+    const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+    window.location.href = `${backendUrl}/auth/google`;
+  };
+
   return (
     <Container component="main" maxWidth="xs">
       <Box
@@ -108,6 +113,44 @@ const LoginPage: React.FC = () => {
             >
               {loading ? 'Signing In...' : 'Sign In'}
             </Button>
+
+            {/* Google Login Button */}
+            <Button
+              fullWidth
+              variant="outlined"
+              onClick={handleGoogleLogin}
+              disabled={loading}
+              sx={{
+                mb: 2,
+                textTransform: 'none',
+                borderColor: '#dadce0',
+                color: '#3c4043',
+                '&:hover': {
+                  borderColor: '#d2d3d4',
+                  backgroundColor: '#f8f9fa',
+                },
+              }}
+              startIcon={
+                <svg width="18" height="18" xmlns="http://www.w3.org/2000/svg">
+                  <g fill="none" fillRule="evenodd">
+                    <path d="M17.6 9.2l-.1-1.8H9v3.4h4.8C13.6 12 13 13 12 13.6v2.2h3a8.8 8.8 0 0 0 2.6-6.6z" fill="#4285F4" fillRule="nonzero"/>
+                    <path d="M9 18c2.4 0 4.5-.8 6-2.2l-3-2.2a5.4 5.4 0 0 1-8-2.9H1V13a9 9 0 0 0 8 5z" fill="#34A853" fillRule="nonzero"/>
+                    <path d="M4 10.7a5.4 5.4 0 0 1 0-3.4V5H1a9 9 0 0 0 0 8l3-2.3z" fill="#FBBC05" fillRule="nonzero"/>
+                    <path d="M9 3.6c1.3 0 2.5.4 3.4 1.3L15 2.3A9 9 0 0 0 1 5l3 2.4a5.4 5.4 0 0 1 5-3.7z" fill="#EA4335" fillRule="nonzero"/>
+                  </g>
+                </svg>
+              }
+            >
+              Sign in with Google
+            </Button>
+
+            <Box sx={{ textAlign: 'center', mb: 2 }}>
+              <Link to="/forgot-password" style={{ textDecoration: 'none' }}>
+                <Typography variant="body2" color="primary">
+                  Forgot Password?
+                </Typography>
+              </Link>
+            </Box>
             <Box sx={{ textAlign: 'center' }}>
               <Link to="/register" style={{ textDecoration: 'none' }}>
                 <Typography variant="body2" color="primary">

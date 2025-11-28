@@ -75,9 +75,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const register = async (data: { email: string; password: string; fullName: string; affiliation?: string }) => {
-    await authService.register(data);
+    // await authService.register(data);
+    try {
+      const response = await authService.register(data);
+      console.log('✅ AuthContext: Registration response:', response);
+      return response; // Trả về verifyToken và email
+    } catch (error) {
+      console.error('❌ AuthContext: Registration error:', error);
+      throw error;
+    }
     // After registration, auto-login
-    await login(data.email, data.password);
+    // await login(data.email, data.password);
   };
 
   const logout = () => {

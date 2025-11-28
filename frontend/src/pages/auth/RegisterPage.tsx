@@ -56,14 +56,17 @@ const RegisterPage: React.FC = () => {
     setError('');
 
     try {
-      await register({
+      const result = await register({
         email: formData.email,
         password: formData.password,
         fullName: formData.fullName,
         affiliation: formData.affiliation || undefined,
       });
-      toast.success('Registration successful!');
-      navigate('/dashboard');
+      console.log('Registration result:', result);
+      const verifyToken = result.verifyToken;
+      localStorage.setItem('verifyToken', verifyToken);
+      // toast.success('Registration successful!');
+      navigate('/verify-otp');
     } catch (err: any) {
       const errorMessage = err.response?.data?.message || 'Registration failed';
       setError(errorMessage);
