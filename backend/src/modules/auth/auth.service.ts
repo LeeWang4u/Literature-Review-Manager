@@ -28,24 +28,6 @@ export class AuthService {
     private emailService: EmailService,
   ) {}
 
-  // async register(registerDto: RegisterDto): Promise<AuthResponse> {
-  //   const user = await this.usersService.create(registerDto);
-  //   return this.generateAuthResponse(user);
-  // }
-
-  // async login(loginDto: LoginDto): Promise<AuthResponse> {
-  //   const user = await this.validateUser(loginDto.email, loginDto.password);
-
-  //   if (!user) {
-  //     throw new UnauthorizedException('Invalid credentials');
-  //   }
-
-  //   // Update last login
-  //   await this.usersService.updateLastLogin(user.id);
-
-  //   return this.generateAuthResponse(user);
-  // }
-
 
   async register(dto: RegisterDto) {
     const existingUser = await this.usersService.findByEmail(dto.email);
@@ -101,37 +83,7 @@ export class AuthService {
     return { message: 'Xác thực email thành công' };
   }
 
-  async resendVerificationEmail(email: string): Promise<{ message: string }> {
-    const user = await this.usersService.findByEmail(email);
 
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    if (user.isEmailVerified) {
-      throw new BadRequestException('Email already verified');
-    }
-
-    // Tạo token mới
-    const verificationToken = randomUUID();
-    const verificationExpires = new Date();
-    verificationExpires.setHours(verificationExpires.getHours() + 24);
-
-    await this.usersService.updateVerificationToken(
-      user.id,
-      verificationToken,
-      verificationExpires,
-    );
-
-    // Gửi lại email
-    await this.emailService.sendVerificationEmail(
-      user.email,
-      verificationToken,
-      user.fullName,
-    );
-
-    return { message: 'Verification email sent. Please check your inbox.' };
-  }
 
   async login(loginDto: LoginDto): Promise<AuthResponse> {
     const user = await this.validateUser(loginDto.email, loginDto.password);
@@ -146,27 +98,7 @@ export class AuthService {
     return this.generateAuthResponse(user);
   }
 
-  // async validateUser(email: string, password: string): Promise<User | null> {
-  //   const user = await this.usersService.findByEmail(email);
 
-  //   if (!user) {
-  //     // Email không tồn tại - trả về null (sẽ hiển thị "Invalid credentials")
-  //     return null;
-  //   }
-
-  //   const isPasswordValid = await bcrypt.compare(password, user.password);
-
-  //   if (!isPasswordValid) {
-  //     // Password sai - throw specific error
-  //     throw new UnauthorizedException('Wrong password');
-  //   }
-
-  //   if (!user.isActive) {
-  //     throw new UnauthorizedException('User account is inactive');
-  //   }
-
-  //   return user;
-  // }
 
   async validateUser(email: string, password: string): Promise<User | null> {
   const user = await this.usersService.findByEmail(email);
@@ -305,5 +237,38 @@ export class AuthService {
     await this.emailService.sendPasswordChangedNotification(user.email, user.fullName);
 
     return { message: 'Mật khẩu đã được cập nhật thành công' };
+  }
+
+  // ✅ GOOGLE LOGIN
+  async validateGoogleUser(googleProfile: any): Promise<User> {
+    const { email, fullName, avatarUrl, googleId } = googleProfile;
+
+    // Tìm user theo email
+    let user = await this.usersService.findByEmail(email);
+
+    if (user) {
+      // Nếu user đã tồn tại, cập nhật googleId và avatarUrl
+      if (!user.googleId) {
+        await this.usersService.updateGoogleId(user.id, googleId);
+      }
+      if (avatarUrl && !user.avatarUrl) {
+        await this.usersService.updateProfile(user.id, { avatarUrl });
+      }
+    } else {
+      // Nếu user chưa tồn tại, tạo mới
+      user = await this.usersService.createGoogleUser({
+        email,
+        fullName,
+        avatarUrl,
+        googleId,
+      });
+    }
+
+    return user;
+  }
+
+  async googleLogin(user: User): Promise<AuthResponse> {
+    await this.usersService.updateLastLogin(user.id);
+    return this.generateAuthResponse(user);
   }
 }

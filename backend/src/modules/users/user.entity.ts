@@ -54,14 +54,9 @@ export class User {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
-  @Column({ default: false })
-  isEmailVerified: boolean;
-
-  @Column({ nullable: true })
-  emailVerificationToken: string;
-
-  @Column({ type: 'datetime', nullable: true })
-  emailVerificationExpires: Date;
+  @Column({ name: 'google_id', length: 255, nullable: true })
+  @Index()
+  googleId: string;
 
   // Relations
   @OneToMany(() => Paper, (paper) => paper.user)

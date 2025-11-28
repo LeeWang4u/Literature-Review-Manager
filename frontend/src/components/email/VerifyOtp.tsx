@@ -1,45 +1,4 @@
-// import { useState } from 'react';
-// import axios from 'axios';
-// import { useNavigate } from 'react-router-dom';
-// import { authService } from '@/services/auth.service';
 
-// export default function VerifyOtp() {
-//   const [otp, setOtp] = useState('');
-//   const navigate = useNavigate();
-
-//   const handleVerify = async () => {
-//     const verifyToken = localStorage.getItem('verifyToken');
-
-//     // await axios.post('/auth/verify-otp', {
-//     //   verifyToken,
-//     //   otp,
-//     // });
-//     const response = await authService.verifyOtp({ token: verifyToken || '', otp });
-
-//     // ✅ Xoá token tạm
-//     localStorage.removeItem('verifyToken');
-//     console.log('verifyOtp   ', response);
-
-//     alert('Xác thực thành công!');
-//     navigate('/login');
-//   };
-
-//   return (
-//     <div>
-//       <h2>Xác thực OTP</h2>
-
-//       <input
-//         type="text"
-//         maxLength={6}
-//         placeholder="Nhập OTP"
-//         value={otp}
-//         onChange={(e) => setOtp(e.target.value)}
-//       />
-
-//       <button onClick={handleVerify}>Xác nhận</button>
-//     </div>
-//   );
-// }
 
 
 import React, { useState } from 'react';

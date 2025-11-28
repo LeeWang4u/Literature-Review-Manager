@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Body, Get, UseGuards, Request, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -6,6 +6,8 @@ import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto, ResetPasswordDto } from './dto/reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
+import { Response } from 'express';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -56,12 +58,7 @@ export class AuthController {
     return this.authService.verifyOtp(token, otp);
   }
 
-  @Post('resend-verification')
-  @ApiOperation({ summary: 'Resend verification email' })
-  @ApiResponse({ status: 200, description: 'Verification email resent successfully' })
-  async resendVerification(@Body('email') email: string) {
-    return this.authService.resendVerificationEmail(email);
-  }
+
 
   @Post('forgot-password')
   @ApiOperation({ summary: 'Request password reset with OTP' })
@@ -77,5 +74,29 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Invalid OTP or token expired' })
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
+  }
+
+  @Get('google')
+  @UseGuards(GoogleAuthGuard)
+  @ApiOperation({ summary: 'Login with Google' })
+  @ApiResponse({ status: 200, description: 'Redirects to Google login' })
+  async googleAuth() {
+    // Initiates the Google OAuth2 login flow
+  }
+
+  @Get('google/callback')
+  @UseGuards(GoogleAuthGuard)
+  @ApiOperation({ summary: 'Google OAuth callback' })
+  @ApiResponse({ status: 200, description: 'Successfully authenticated with Google' })
+  async googleAuthCallback(@Request() req, @Res() res: Response) {
+    // Validate and create/update user from Google profile
+    const user = await this.authService.validateGoogleUser(req.user);
+    
+    // Generate JWT token
+    const authResponse = await this.authService.googleLogin(user);
+    
+    // Redirect to frontend with token
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/auth/google/callback?token=${authResponse.accessToken}`);
   }
 }

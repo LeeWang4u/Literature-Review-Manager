@@ -11,6 +11,7 @@ import RegisterPage from '@/pages/auth/RegisterPage';
 import ChangePasswordPage from '@/pages/auth/ChangePasswordPage';
 import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage';
+import GoogleCallbackPage from '@/pages/auth/GoogleCallbackPage';
 import DashboardPage from '@/pages/dashboard/DashboardPage';
 import PapersPage from '@/pages/papers/PapersPage';
 import PaperDetailPage from '@/pages/papers/PaperDetailPage';
@@ -66,6 +67,7 @@ function App() {
               <Route path="/verify-otp" element={<VerifyOtp />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
+              <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
 
               <Route path="/verify-email" element={<VerifyEmail />} />
 

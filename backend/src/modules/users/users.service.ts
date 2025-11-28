@@ -67,35 +67,59 @@ export class UsersService {
     });
   }
 
-  async findByVerificationToken(token: string): Promise<User | null> {
-    return this.usersRepository.findOne({
-      where: { emailVerificationToken: token },
-    });
-  }
+  // async findByVerificationToken(token: string): Promise<User | null> {
+  //   return this.usersRepository.findOne({
+  //     where: { emailVerificationToken: token },
+  //   });
+  // }
 
-  async verifyEmail(userId: number): Promise<void> {
-    await this.usersRepository.update(userId, {
-      isEmailVerified: true,
-      isActive: true,
-      emailVerificationToken: null,
-      emailVerificationExpires: null,
-    });
-  }
+  // async verifyEmail(userId: number): Promise<void> {
+  //   await this.usersRepository.update(userId, {
+  //     isEmailVerified: true,
+  //     isActive: true,
+  //     emailVerificationToken: null,
+  //     emailVerificationExpires: null,
+  //   });
+  // }
 
-  async updateVerificationToken(
-    userId: number,
-    token: string,
-    expires: Date,
-  ): Promise<void> {
-    await this.usersRepository.update(userId, {
-      emailVerificationToken: token,
-      emailVerificationExpires: expires,
-    });
-  }
+  // async updateVerificationToken(
+  //   userId: number,
+  //   token: string,
+  //   expires: Date,
+  // ): Promise<void> {
+  //   await this.usersRepository.update(userId, {
+  //     emailVerificationToken: token,
+  //     emailVerificationExpires: expires,
+  //   });
+  // }
 
   async updatePassword(userId: number, hashedPassword: string): Promise<void> {
     await this.usersRepository.update(userId, {
       password: hashedPassword,
     });
+  }
+
+  async updateGoogleId(userId: number, googleId: string): Promise<void> {
+    await this.usersRepository.update(userId, {
+      googleId,
+    });
+  }
+
+  async createGoogleUser(googleProfile: {
+    email: string;
+    fullName: string;
+    avatarUrl: string;
+    googleId: string;
+  }): Promise<User> {
+    const user = this.usersRepository.create({
+      email: googleProfile.email,
+      fullName: googleProfile.fullName,
+      avatarUrl: googleProfile.avatarUrl,
+      googleId: googleProfile.googleId,
+      password: '', // No password for Google users
+      isActive: true,
+    });
+
+    return await this.usersRepository.save(user);
   }
 }
