@@ -3,13 +3,14 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { ChangePasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto, ResetPasswordDto } from './dto/reset-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(private authService: AuthService) { }
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
@@ -46,5 +47,35 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async changePassword(@Request() req, @Body() changePasswordDto: ChangePasswordDto) {
     return await this.authService.changePassword(req.user.id, changePasswordDto);
+  }
+
+  @Post('verify-email')
+  @ApiOperation({ summary: 'Verify email address' })
+  @ApiResponse({ status: 200, description: 'Email verified successfully' })
+  async verifyEmail(@Body('token') token: string, @Body('otp') otp: string) {
+    return this.authService.verifyOtp(token, otp);
+  }
+
+  @Post('resend-verification')
+  @ApiOperation({ summary: 'Resend verification email' })
+  @ApiResponse({ status: 200, description: 'Verification email resent successfully' })
+  async resendVerification(@Body('email') email: string) {
+    return this.authService.resendVerificationEmail(email);
+  }
+
+  @Post('forgot-password')
+  @ApiOperation({ summary: 'Request password reset with OTP' })
+  @ApiResponse({ status: 200, description: 'OTP sent to email successfully' })
+  @ApiResponse({ status: 400, description: 'Email does not exist' })
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(forgotPasswordDto);
+  }
+
+  @Post('reset-password')
+  @ApiOperation({ summary: 'Reset password with OTP' })
+  @ApiResponse({ status: 200, description: 'Password reset successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid OTP or token expired' })
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetPasswordDto);
   }
 }

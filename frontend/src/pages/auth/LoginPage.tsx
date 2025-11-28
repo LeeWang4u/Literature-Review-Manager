@@ -108,6 +108,13 @@ const LoginPage: React.FC = () => {
             >
               {loading ? 'Signing In...' : 'Sign In'}
             </Button>
+            <Box sx={{ textAlign: 'center', mb: 2 }}>
+              <Link to="/forgot-password" style={{ textDecoration: 'none' }}>
+                <Typography variant="body2" color="primary">
+                  Forgot Password?
+                </Typography>
+              </Link>
+            </Box>
             <Box sx={{ textAlign: 'center' }}>
               <Link to="/register" style={{ textDecoration: 'none' }}>
                 <Typography variant="body2" color="primary">

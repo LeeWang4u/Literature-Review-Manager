@@ -1,3 +1,4 @@
+import { verify } from 'crypto';
 import axiosInstance from './api';
 import {
   LoginCredentials,
@@ -30,6 +31,16 @@ export const authService = {
     return response.data;
   },
 
+  verifyEmail: async (token: string): Promise<{ message: string }> => {
+    const response = await axiosInstance.post<{ message: string }>('/auth/verify-email', { token });
+    return response.data;
+  },
+
+  verifyOtp: async (data: { token: string; otp: string }): Promise<{ message: string }> => {
+    const response = await axiosInstance.post<{ message: string }>('/auth/verify-email', data);
+    return response.data;
+  },
+
   // Get current user profile
   getProfile: async (): Promise<User> => {
     const response = await axiosInstance.get<User>('/auth/profile');
@@ -56,6 +67,26 @@ export const authService = {
   // Change password
   changePassword: async (data: { currentPassword: string; newPassword: string }): Promise<{ message: string }> => {
     const response = await axiosInstance.post('/auth/change-password', data);
+    return response.data;
+  },
+
+  // Forgot Password - Gửi OTP
+  forgotPassword: async (email: string): Promise<{ resetToken: string; message: string }> => {
+    console.log('📤 AuthService: Sending forgot password request...', { email });
+    const response = await axiosInstance.post('/auth/forgot-password', { email });
+    console.log('✅ AuthService: Forgot password response:', response.data);
+    return response.data;
+  },
+
+  // Reset Password với OTP
+  resetPassword: async (data: {
+    resetToken: string;
+    otp: string;
+    newPassword: string;
+  }): Promise<{ message: string }> => {
+    console.log('📤 AuthService: Resetting password...', data);
+    const response = await axiosInstance.post('/auth/reset-password', data);
+    console.log('✅ AuthService: Password reset response:', response.data);
     return response.data;
   },
 };

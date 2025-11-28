@@ -54,6 +54,15 @@ export class User {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
+  @Column({ default: false })
+  isEmailVerified: boolean;
+
+  @Column({ nullable: true })
+  emailVerificationToken: string;
+
+  @Column({ type: 'datetime', nullable: true })
+  emailVerificationExpires: Date;
+
   // Relations
   @OneToMany(() => Paper, (paper) => paper.user)
   papers: Paper[];

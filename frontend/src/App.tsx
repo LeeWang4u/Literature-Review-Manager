@@ -9,6 +9,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import LoginPage from '@/pages/auth/LoginPage';
 import RegisterPage from '@/pages/auth/RegisterPage';
 import ChangePasswordPage from '@/pages/auth/ChangePasswordPage';
+import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
+import ResetPasswordPage from '@/pages/auth/ResetPasswordPage';
 import DashboardPage from '@/pages/dashboard/DashboardPage';
 import PapersPage from '@/pages/papers/PapersPage';
 import PaperDetailPage from '@/pages/papers/PaperDetailPage';
@@ -21,6 +23,8 @@ import ProfilePage from '@/pages/profile/ProfilePage';
 import TagPaperPage from '@/pages/tags/TagPapersPage';
 import ChatTestPage from '@/pages/ChatTestPage';
 import PdfViewPage from '@/components/pdf/PdfViewPage';
+import VerifyEmail from './components/email/VerifyEmail';
+import VerifyOtp from './components/email/VerifyOtp';
 
 // Create MUI theme
 const theme = createTheme({
@@ -59,6 +63,11 @@ function App() {
               {/* Public routes */}
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/verify-otp" element={<VerifyOtp />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+              <Route path="/verify-email" element={<VerifyEmail />} />
 
               {/* Protected routes */}
               <Route

@@ -47,4 +47,16 @@ export class RegisterDto {
   @IsString()
   @IsOptional()
   researchInterests?: string;
+
+   @IsOptional()
+  emailVerificationToken?: string;
+
+  @IsOptional()
+  emailVerificationExpires?: Date;
+
+  @IsOptional()
+  isEmailVerified?: boolean;
+
+   @IsOptional()
+  isActive?: boolean;
 }
