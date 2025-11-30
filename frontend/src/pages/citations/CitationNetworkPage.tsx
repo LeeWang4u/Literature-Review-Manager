@@ -30,7 +30,6 @@ import {
   RestartAlt,
   Close,
   Circle,
-  Visibility,
   Timeline,
   Star,
   Edit,
@@ -38,9 +37,7 @@ import {
   Cancel,
   AccountTree,
   AutoAwesome,
-  Psychology,
   FilterList,
-  TrendingUp,
   OpenInNew,
   ArrowBack,
 } from '@mui/icons-material';
@@ -77,11 +74,11 @@ const CitationNetworkPage: React.FC = () => {
   const [depth, setDepth] = useState<number>(2);
   const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [showLabels, setShowLabels] = useState(true);
   const [editingNode, setEditingNode] = useState<number | null>(null);
   const [tempRelevance, setTempRelevance] = useState<number>(0);
   const [tempContext, setTempContext] = useState<string>('');
-  const [showTopOnly, setShowTopOnly] = useState(true);
+  const [showTopOnly] = useState(true);
+  const [useTreeLayout, setUseTreeLayout] = useState(true); // Toggle tree vs force layout
   const analysisLimit = 15;
   const minRelevance = 0.3;
   const [filteredCount, setFilteredCount] = useState({ nodes: 0, edges: 0 });
@@ -105,7 +102,7 @@ const CitationNetworkPage: React.FC = () => {
     enabled: !!id,
   });
 
-  const { data: analysis, isLoading: analysisLoading } = useQuery({
+  const { data: analysis } = useQuery({
     queryKey: ['referenceAnalysis', id, analysisLimit, minRelevance],
     queryFn: () => citationService.analyzeReferences(Number(id), { limit: analysisLimit, minRelevance }),
     enabled: !!id && showTopOnly, // Only fetch when showTopOnly is true
@@ -139,17 +136,18 @@ const CitationNetworkPage: React.FC = () => {
     },
   });
 
-  const autoRateAllMutation = useMutation({
-    mutationFn: () => citationService.autoRateAll(Number(id)),
-    onSuccess: (result) => {
-      toast.success(`AI rated ${result.rated} citations successfully!${result.failed > 0 ? ` (${result.failed} failed)` : ''}`);
-      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id] });
-      queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Batch AI rating failed');
-    },
-  });
+  // Uncomment if needed for batch AI rating
+  // const autoRateAllMutation = useMutation({
+  //   mutationFn: () => citationService.autoRateAll(Number(id)),
+  //   onSuccess: (result) => {
+  //     toast.success(`AI rated ${result.rated} citations successfully!${result.failed > 0 ? ` (${result.failed} failed)` : ''}`);
+  //     queryClient.invalidateQueries({ queryKey: ['citationNetwork', id] });
+  //     queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
+  //   },
+  //   onError: (error: any) => {
+  //     toast.error(error.response?.data?.message || 'Batch AI rating failed');
+  //   },
+  // });
 
   const fetchNestedMutation = useMutation({
     mutationFn: ({ paperId, depth, maxDepth }: { paperId: number; depth: number; maxDepth: number }) =>
@@ -387,25 +385,7 @@ const CitationNetworkPage: React.FC = () => {
     feMerge.append('feMergeNode');
     feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
 
-    // Improved force simulation for better layout
-    const simulation = d3
-      .forceSimulation(filteredNodes as any)
-      .force(
-        'link',
-        d3
-          .forceLink(filteredEdges)
-          .id((d: any) => d.id)
-          .distance(250)
-          .strength(0.3)
-      )
-      .force('charge', d3.forceManyBody().strength(-1200))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(60))
-      .force('x', d3.forceX(width / 2).strength(0.08))
-      .force('y', d3.forceY(height / 2).strength(0.08))
-      .alphaDecay(0.015);
-
-    // Enhanced links with curved paths
+    // Enhanced links with curved paths - CREATE FIRST before layout logic
     const link = g
       .append('g')
       .attr('class', 'links')
@@ -439,8 +419,157 @@ const CitationNetworkPage: React.FC = () => {
       .attr('stroke-dasharray', (d: any) => {
         if (!d.relevanceScore || d.relevanceScore < 0.3) return '5,5';
         return 'none';
+      })
+      .attr('cursor', 'pointer')
+      .on('mouseenter', function(event, d: any) {
+        // Highlight this link only
+        d3.select(this)
+          .raise()
+          .transition()
+          .duration(200)
+          .attr('stroke-opacity', 0.95)
+          .attr('stroke-width', d.isInfluential ? 6 : 5);
+      })
+      .on('mouseleave', function(event, d: any) {
+        // Reset this link
+        d3.select(this)
+          .transition()
+          .duration(200)
+          .attr('stroke-opacity', d.relevanceScore ? 0.4 + d.relevanceScore * 0.5 : 0.3)
+          .attr('stroke-width', d.isInfluential ? 4 : d.relevanceScore && d.relevanceScore >= 0.7 ? 3.5 : d.relevanceScore && d.relevanceScore >= 0.4 ? 3 : 2);
+      });
+    
+    // Add tooltips to links
+    link.append('title')
+      .text((d: any) => {
+        const sourceTitle = d.source.title || 'Unknown';
+        const targetTitle = d.target.title || 'Unknown';
+        const parts = [
+          `📄 From: ${sourceTitle.substring(0, 50)}${sourceTitle.length > 50 ? '...' : ''}`,
+          `📄 To: ${targetTitle.substring(0, 50)}${targetTitle.length > 50 ? '...' : ''}`,
+          '',
+          d.relevanceScore ? `⭐ Relevance: ${(d.relevanceScore * 100).toFixed(0)}%` : '❓ Not rated',
+          d.isInfluential ? '🌟 Highly Influential Citation' : '',
+        ];
+        return parts.filter(Boolean).join('\n');
       });
 
+    // Layout logic based on toggle
+    if (useTreeLayout) {
+      // === TREE TIMELINE LAYOUT ===
+      
+      // Group nodes by year
+      const nodesByYear = d3.group(filteredNodes, (d: any) => d.year || 'Unknown');
+      const years = Array.from(nodesByYear.keys()).sort((a, b) => {
+        if (a === 'Unknown') return 1;
+        if (b === 'Unknown') return -1;
+        return Number(b) - Number(a); // Descending (newest first, top to bottom)
+      });
+
+      console.log('📅 Years in network:', years);
+      console.log('📊 Nodes per year:', Array.from(nodesByYear.entries()).map(([y, nodes]) => `${y}: ${nodes.length}`));
+
+      // Calculate layout
+      const yearHeight = 150; // Space between year groups (reduced from 200)
+      const yearLabelOffset = 120; // Left margin for year labels
+      const nodeSpacing = 200; // Horizontal spacing between nodes in same year (reduced from 180 to 200 for better wrapping)
+      let currentY = 120; // Starting Y position
+
+      // Position nodes by year
+      filteredNodes.forEach((node: any) => {
+        const yearNodes = nodesByYear.get(node.year || 'Unknown')!;
+        const yearIndex = years.indexOf(node.year || 'Unknown');
+        const nodeIndexInYear = yearNodes.indexOf(node);
+        
+        // Calculate position
+        const nodesInThisYear = yearNodes.length;
+        const totalWidth = nodesInThisYear * nodeSpacing;
+        const startX = (width - totalWidth) / 2 + yearLabelOffset;
+        
+        node.x = startX + nodeIndexInYear * nodeSpacing;
+        node.y = currentY + yearIndex * yearHeight;
+        node.fx = node.x; // Fix position
+        node.fy = node.y;
+      });
+
+      // Draw year separators and labels
+      const yearGroups = g.append('g').attr('class', 'year-groups');
+      
+      years.forEach((year, index) => {
+        const y = currentY + index * yearHeight;
+        const nodes = nodesByYear.get(year)!;
+        
+        // Year separator line
+        yearGroups.append('line')
+          .attr('x1', 100)
+          .attr('y1', y - 80)
+          .attr('x2', width - 50)
+          .attr('y2', y - 80)
+          .attr('stroke', '#dee2e6')
+          .attr('stroke-width', 2)
+          .attr('stroke-dasharray', '5,5')
+          .attr('opacity', 0.5);
+        
+        // Year label background
+        yearGroups.append('rect')
+          .attr('x', 15)
+          .attr('y', y - 95)
+          .attr('width', 80)
+          .attr('height', 50)
+          .attr('fill', '#fff')
+          .attr('stroke', '#90caf9')
+          .attr('stroke-width', 2)
+          .attr('rx', 8);
+        
+        // Year label text
+        yearGroups.append('text')
+          .attr('x', 55)
+          .attr('y', y - 75)
+          .attr('text-anchor', 'middle')
+          .attr('font-size', '16px')
+          .attr('font-weight', 'bold')
+          .attr('fill', '#1976d2')
+          .text(year);
+        
+        // Node count
+        yearGroups.append('text')
+          .attr('x', 55)
+          .attr('y', y - 55)
+          .attr('text-anchor', 'middle')
+          .attr('font-size', '11px')
+          .attr('fill', '#666')
+          .text(`${nodes.length} ${nodes.length === 1 ? 'paper' : 'papers'}`);
+      });
+
+    } else {
+      // === FORCE-DIRECTED LAYOUT ===
+      
+      // Improved force simulation for better layout
+      const simulation = d3
+        .forceSimulation(filteredNodes as any)
+        .force(
+          'link',
+          d3
+            .forceLink(filteredEdges)
+            .id((d: any) => d.id)
+            .distance(250)
+            .strength(0.3)
+        )
+        .force('charge', d3.forceManyBody().strength(-1200))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('collision', d3.forceCollide().radius(60))
+        .force('x', d3.forceX(width / 2).strength(0.08))
+        .force('y', d3.forceY(height / 2).strength(0.08))
+        .alphaDecay(0.015);
+
+      // Update positions on tick
+      simulation.on('tick', () => {
+        link.attr('d', linkArc as any);
+        node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
+      });
+    }
+
+    // Create nodes after links (for proper z-order)
     const node = g
       .append('g')
       .attr('class', 'nodes')
@@ -453,6 +582,65 @@ const CitationNetworkPage: React.FC = () => {
         setSelectedNode(d);
         setDrawerOpen(true);
       })
+      .on('mouseenter', function(event, d: any) {
+        // Scale up the node
+        d3.select(this)
+          .raise() // Bring to front
+          .transition()
+          .duration(200)
+          .attr('transform', `translate(${d.x},${d.y}) scale(1.1)`);
+        
+        // Highlight connected links
+        link
+          .transition()
+          .duration(200)
+          .attr('stroke-opacity', (l: any) => {
+            if (l.source.id === d.id || l.target.id === d.id) {
+              return 0.8;
+            }
+            return 0.1;
+          })
+          .attr('stroke-width', (l: any) => {
+            if (l.source.id === d.id || l.target.id === d.id) {
+              return l.isInfluential ? 5 : 4;
+            }
+            return l.isInfluential ? 4 : 2;
+          });
+        
+        // Dim other nodes
+        node
+          .transition()
+          .duration(200)
+          .attr('opacity', (n: any) => n.id === d.id ? 1 : 0.3);
+      })
+      .on('mouseleave', function(event, d: any) {
+        // Reset node scale
+        d3.select(this)
+          .transition()
+          .duration(200)
+          .attr('transform', `translate(${d.x},${d.y}) scale(1)`);
+        
+        // Reset links
+        link
+          .transition()
+          .duration(200)
+          .attr('stroke-opacity', (l: any) => {
+            if (l.relevanceScore) return 0.4 + l.relevanceScore * 0.5;
+            return 0.3;
+          })
+          .attr('stroke-width', (l: any) => {
+            if (l.isInfluential) return 4;
+            if (l.relevanceScore && l.relevanceScore >= 0.7) return 3.5;
+            if (l.relevanceScore && l.relevanceScore >= 0.4) return 3;
+            return 2;
+          });
+        
+        // Reset all nodes
+        node
+          .transition()
+          .duration(200)
+          .attr('opacity', 1);
+      })
       .call(
         d3.drag<any, any>()
           .on('start', dragstarted)
@@ -460,95 +648,108 @@ const CitationNetworkPage: React.FC = () => {
           .on('end', dragended)
       );
 
-    // Main node circle with shadow
-    node.append('circle')
-      .attr('class', 'node-circle')
-      .attr('r', (d: any) => {
-        if (d.id === Number(id)) return 20;
-        if (d.isInfluential) return 16;
-        if (d.relevanceScore && d.relevanceScore >= 0.7) return 14;
-        return 11;
-      })
+    // Rectangle node with title inside (instead of circle + separate label)
+    const nodeWidth = 180;
+    const nodeHeight = 75; // Increased height to accommodate wrapped text
+    
+    node.append('rect')
+      .attr('class', 'node-rect')
+      .attr('x', -nodeWidth / 2)
+      .attr('y', -nodeHeight / 2)
+      .attr('width', nodeWidth)
+      .attr('height', nodeHeight)
+      .attr('rx', 8)
+      .attr('ry', 8)
       .attr('fill', (d: any) => {
-        // Prioritize depth-based coloring for better hierarchy visualization
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
-
-        if (d.id === Number(id)) return 'url(#current-paper-gradient)';
-
-        // Depth-based colors with influence overlay
+        if (d.id === Number(id)) return '#e91e63';
         if (d.isInfluential) {
-          // Influential papers with depth tint
-          if (depth === 0) return 'url(#influential-gradient)';
-          if (depth === 1) return '#FFB300'; // Gold for depth 1 influential
-          if (depth === 2) return '#FFA726'; // Orange for depth 2 influential
-          return '#FF8A65'; // Coral for depth 3+ influential
+          if (depth === 0) return '#ffa726';
+          if (depth === 1) return '#ffb74d';
+          return '#ffcc80';
         }
-
-        // Non-influential papers colored by depth
-        if (depth === 0) {
-          // Depth 0: Green shades (direct references)
-          if (d.relevanceScore >= 0.8) return '#4CAF50';
-          if (d.relevanceScore >= 0.6) return '#66BB6A';
-          if (d.relevanceScore >= 0.4) return '#81C784';
-          return '#A5D6A7';
-        } else if (depth === 1) {
-          // Depth 1: Blue shades (references of references)
-          if (d.relevanceScore >= 0.8) return '#2196F3';
-          if (d.relevanceScore >= 0.6) return '#42A5F5';
-          if (d.relevanceScore >= 0.4) return '#64B5F6';
-          return '#90CAF9';
-        } else if (depth === 2) {
-          // Depth 2: Purple shades
-          if (d.relevanceScore >= 0.8) return '#9C27B0';
-          if (d.relevanceScore >= 0.6) return '#AB47BC';
-          if (d.relevanceScore >= 0.4) return '#BA68C8';
-          return '#CE93D8';
-        } else {
-          // Depth 3+: Gray shades
-          return '#90A4AE';
-        }
+        if (depth === 0) return '#66bb6a';
+        if (depth === 1) return '#42a5f5';
+        if (depth === 2) return '#ab47bc';
+        return '#90a4ae';
       })
       .attr('stroke', (d: any) => {
-        if (d.id === Number(id)) return '#ff1744';
-        if (d.isInfluential) return '#ffb300';
-
+        if (d.id === Number(id)) return '#c2185b';
+        if (d.isInfluential) return '#f57c00';
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
-        if (depth === 0) return '#2E7D32'; // Dark green
-        if (depth === 1) return '#1565C0'; // Dark blue
-        if (depth === 2) return '#6A1B9A'; // Dark purple
-        return '#546E7A'; // Dark gray
+        if (depth === 0) return '#388e3c';
+        if (depth === 1) return '#1976d2';
+        if (depth === 2) return '#7b1fa2';
+        return '#546e7a';
       })
       .attr('stroke-width', (d: any) => {
-        if (d.id === Number(id)) return 4;
-        if (d.isInfluential) return 3.5;
-        if (d.relevanceScore && d.relevanceScore >= 0.7) return 3;
-        return 2.5;
+        if (d.id === Number(id)) return 3;
+        if (d.isInfluential) return 2.5;
+        return 2;
       })
       .attr('filter', 'url(#node-shadow)')
-      .on('mouseenter', function (this: any, _: any, d: any) {
+      .on('mouseenter', function (this: any) {
         d3.select(this)
           .transition()
           .duration(200)
-          .attr('r', () => {
-            const currentR = d.id === Number(id) ? 20 : d.isInfluential ? 16 : d.relevanceScore && d.relevanceScore >= 0.7 ? 14 : 11;
-            return currentR * 1.3;
-          })
-          .attr('stroke-width', 4);
+          .attr('stroke-width', 4)
+          .attr('filter', 'url(#node-shadow) brightness(1.1)');
       })
       .on('mouseleave', function (this: any, _: any, d: any) {
         d3.select(this)
           .transition()
           .duration(200)
-          .attr('r', d.id === Number(id) ? 20 : d.isInfluential ? 16 : d.relevanceScore && d.relevanceScore >= 0.7 ? 14 : 11)
-          .attr('stroke-width', d.id === Number(id) ? 4 : d.isInfluential ? 3.5 : d.relevanceScore && d.relevanceScore >= 0.7 ? 3 : 2.5);
+          .attr('stroke-width', d.id === Number(id) ? 3 : d.isInfluential ? 2.5 : 2)
+          .attr('filter', 'url(#node-shadow)');
       });
 
-    // Improved relevance score badge
+    // Title text with word wrapping using foreignObject
+    node.append('foreignObject')
+      .attr('x', -nodeWidth / 2 + 5)
+      .attr('y', -nodeHeight / 2 + 5)
+      .attr('width', nodeWidth - 10)
+      .attr('height', nodeHeight - 25) // Leave space for year badge
+      .append('xhtml:div')
+      .style('width', '100%')
+      .style('height', '100%')
+      .style('display', 'flex')
+      .style('align-items', 'center')
+      .style('justify-content', 'center')
+      .style('text-align', 'center')
+      .style('font-size', '11px')
+      .style('font-weight', (d: any) => (d.id === Number(id) ? 'bold' : d.isInfluential ? '600' : 'normal'))
+      .style('color', '#fff')
+      .style('line-height', '1.3')
+      .style('overflow', 'hidden')
+      .style('word-wrap', 'break-word')
+      .style('padding', '2px')
+      .text((d: any) => {
+        const title = d.title || 'Untitled';
+        // Allow longer titles since they can wrap
+        return title.length > 60 ? title.substring(0, 60) + '...' : title;
+      });
+
+    // Year and badge at bottom
+    node.append('text')
+      .attr('x', 0)
+      .attr('y', nodeHeight / 2 - 10)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', 10)
+      .attr('fill', '#fff')
+      .attr('opacity', 0.9)
+      .attr('pointer-events', 'none')
+      .text((d: any) => {
+        const year = d.year || d.publicationYear || '';
+        const badge = d.isInfluential ? ' ⭐' : '';
+        return `${year}${badge}`.trim();
+      });
+
+    // Relevance score badge (small circle on top-right corner)
     node.filter((d: any) => d.relevanceScore && d.relevanceScore > 0)
       .append('circle')
-      .attr('r', 12)
-      .attr('cx', 18)
-      .attr('cy', -18)
+      .attr('r', 11)
+      .attr('cx', nodeWidth / 2 - 12)
+      .attr('cy', -nodeHeight / 2 + 12)
       .attr('fill', (d: any) => {
         const score = d.relevanceScore;
         if (score >= 0.8) return '#4caf50';
@@ -557,31 +758,19 @@ const CitationNetworkPage: React.FC = () => {
         return '#ff9800';
       })
       .attr('stroke', '#fff')
-      .attr('stroke-width', 2.5)
-      .attr('filter', 'url(#node-shadow)');
+      .attr('stroke-width', 2);
 
     node.filter((d: any) => d.relevanceScore && d.relevanceScore > 0)
       .append('text')
-      .attr('x', 18)
-      .attr('y', -13)
+      .attr('x', nodeWidth / 2 - 12)
+      .attr('y', -nodeHeight / 2 + 12)
       .attr('text-anchor', 'middle')
-      .attr('font-size', 11)
+      .attr('dominant-baseline', 'central')
+      .attr('font-size', 8)
       .attr('font-weight', 'bold')
       .attr('fill', '#fff')
-      .attr('stroke', 'none')
-      .text((d: any) => (d.relevanceScore * 10).toFixed(1));
-
-    // Add influential star icon
-    node.filter((d: any) => d.isInfluential)
-      .append('text')
-      .attr('x', 0)
-      .attr('y', 6)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', 14)
-      .attr('fill', '#fff')
-      .attr('stroke', 'none')
-      .style('pointer-events', 'none')
-      .text('⭐');
+      .attr('pointer-events', 'none')
+      .text((d: any) => Math.round(d.relevanceScore * 100));
 
     // Enhanced tooltip
     node.append('title')
@@ -593,116 +782,93 @@ const CitationNetworkPage: React.FC = () => {
               `Very Deep Reference (Lv${depth})`;
 
         const parts = [
-          `📄 ${d.title || 'Untitled'}`,
+          `📄 Title: ${d.title || 'Untitled'}`,
           '',
           `🔗 ${depthLabel}`,
           d.year ? `📅 Year: ${d.year}` : '',
           d.authors ? `✍️ Authors: ${typeof d.authors === 'string' ? d.authors.substring(0, 100) : d.authors.slice(0, 3).join(', ')}${typeof d.authors === 'string' && d.authors.length > 100 ? '...' : ''}` : '',
+          d.doi ? `🔗 DOI: ${d.doi}` : '',
           '',
           d.relevanceScore ? `⭐ Relevance: ${(d.relevanceScore * 100).toFixed(0)}% ${d.relevanceScore >= 0.8 ? '(High)' : d.relevanceScore >= 0.6 ? '(Good)' : d.relevanceScore >= 0.4 ? '(Medium)' : '(Low)'}` : '❓ Not rated yet',
           d.isInfluential ? '🌟 Influential Reference' : '',
           '',
-          '💡 Click to view details and rate'
+          '🖱️ Hover: Highlight connections',
+          '💡 Click: View details and rate'
         ];
         return parts.filter(Boolean).join('\n');
       });
 
-    // Enhanced labels with background
-    const label = g
-      .append('g')
-      .attr('class', 'labels')
-      .selectAll('g')
-      .data(network.nodes)
-      .join('g')
-      .attr('pointer-events', 'none')
-      .attr('display', showLabels ? 'block' : 'none');
+    // NO separate labels - text is inside rectangles now
 
-    // Label background for better readability
-    label.append('rect')
-      .attr('x', 24)
-      .attr('y', -18)
-      .attr('rx', 4)
-      .attr('ry', 4)
-      .attr('fill', 'rgba(255, 255, 255, 0.95)')
-      .attr('stroke', (d: any) => {
-        if (d.id === Number(id)) return '#dc004e';
-        if (d.isInfluential) return '#ffd700';
-        if (d.relevanceScore && d.relevanceScore >= 0.7) return '#4caf50';
-        return '#e0e0e0';
-      })
-      .attr('stroke-width', 1.5)
-      .attr('width', (d: any) => {
-        const title = d.title?.substring(0, 50) || '';
-        return Math.min(title.length * 6 + 20, 320);
-      })
-      .attr('height', 24)
-      .attr('filter', 'url(#node-shadow)');
-
-    // Label text
-    label.append('text')
-      .attr('x', 28)
-      .attr('y', -3)
-      .attr('font-size', 12)
-      .attr('font-weight', (d: any) => (d.id === Number(id) ? 'bold' : d.isInfluential ? '600' : 'normal'))
-      .attr('fill', (d: any) => {
-        if (d.id === Number(id)) return '#dc004e';
-        if (d.isInfluential) return '#f57c00';
-        return '#424242';
-      })
-      .text((d: any) => {
-        const title = d.title?.substring(0, 50) + (d.title?.length > 50 ? '...' : '') || 'Untitled';
-        const year = d.year || d.publicationYear;
-        const yearText = year ? ` (${year})` : '';
-        const badge = d.isInfluential ? ' ⭐' : '';
-        return `${title}${yearText}${badge}`;
-      });
-
-    simulation.on('tick', () => {
-      // Straight links for clarity
-      link.attr('d', (d: any) => {
-        const sourceX = d.source.x ?? width / 2;
-        const sourceY = d.source.y ?? height / 2;
-        const targetX = d.target.x ?? width / 2;
-        const targetY = d.target.y ?? height / 2;
-        return `M${sourceX},${sourceY}L${targetX},${targetY}`;
-      });
-
-      node.attr('transform', (d: any) => {
-        const x = d.x ?? width / 2;
-        const y = d.y ?? height / 2;
-        return `translate(${x},${y})`;
-      });
-
-      label.attr('transform', (d: any) => {
-        const x = d.x ?? width / 2;
-        const y = d.y ?? height / 2;
-        return `translate(${x},${y})`;
-      });
-    });
-
-    function dragstarted(event: any) {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
+    // Helper function for orthogonal (right-angle) link paths
+    function linkArc(d: any) {
+      const sourceX = d.source.x ?? width / 2;
+      const sourceY = d.source.y ?? height / 2;
+      const targetX = d.target.x ?? width / 2;
+      const targetY = d.target.y ?? height / 2;
+      
+      // Orthogonal path with right angles
+      const midY = (sourceY + targetY) / 2;
+      
+      // Vertical then horizontal path (L-shape or Z-shape)
+      return `M${sourceX},${sourceY} L${sourceX},${midY} L${targetX},${midY} L${targetX},${targetY}`;
     }
 
-    function dragged(event: any) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
+    // Drag functions
+    function dragstarted(event: any, d: any) {
+      if (useTreeLayout) {
+        // In tree layout, temporarily unfix position
+        d.fx = d.x;
+        d.fy = d.y;
+      } else {
+        if (!event.active && (svg as any).simulation) (svg as any).simulation.alphaTarget(0.3).restart();
+        event.subject.fx = event.subject.x;
+        event.subject.fy = event.subject.y;
+      }
+    }
+
+    function dragged(event: any, d: any) {
+      d.fx = event.x;
+      d.fy = event.y;
+      
+      // Update visual position immediately for tree layout
+      if (useTreeLayout) {
+        d3.select(event.sourceEvent.target.parentNode)
+          .attr('transform', `translate(${event.x},${event.y})`);
+        link.attr('d', linkArc as any);
+      }
     }
 
     function dragended(event: any) {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
+      if (useTreeLayout) {
+        // Keep node at dragged position in tree layout
+        // d.fx and d.fy remain set
+      } else {
+        if (!event.active && (svg as any).simulation) (svg as any).simulation.alphaTarget(0);
+        event.subject.fx = null;
+        event.subject.fy = null;
+      }
     }
 
-    (svg as any).simulation = simulation;
+    // Update link and node positions
+    if (useTreeLayout) {
+      // Static positions for tree layout - set positions immediately
+      node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
+      // Force immediate link update - nodes already have x,y from positioning logic above
+      link.attr('d', linkArc as any);
+    }
+
+    // Store simulation reference for cleanup
+    if (!useTreeLayout && (svg as any).simulation) {
+      (svg as any).cleanup = () => {
+        (svg as any).simulation.stop();
+      };
+    }
 
     return () => {
-      simulation.stop();
+      if ((svg as any).cleanup) (svg as any).cleanup();
     };
-  }, [network, id, showLabels]);
+  }, [network, id, useTreeLayout]);
 
   const handleZoomIn = () => {
     if (svgRef.current) {
@@ -950,12 +1116,16 @@ const CitationNetworkPage: React.FC = () => {
               <RestartAlt />
             </IconButton>
           </Tooltip>
-          <Tooltip title={showLabels ? 'Hide Labels' : 'Show Labels'} placement="left">
+          <Tooltip title={useTreeLayout ? 'Force Layout' : 'Tree Layout'} placement="left">
             <IconButton
-              onClick={() => setShowLabels(!showLabels)}
-              sx={{ bgcolor: 'background.paper', '&:hover': { bgcolor: 'action.hover' } }}
+              onClick={() => setUseTreeLayout(!useTreeLayout)}
+              sx={{ 
+                bgcolor: useTreeLayout ? 'primary.main' : 'background.paper', 
+                color: useTreeLayout ? 'white' : 'inherit',
+                '&:hover': { bgcolor: useTreeLayout ? 'primary.dark' : 'action.hover' } 
+              }}
             >
-              <Visibility />
+              <AccountTree />
             </IconButton>
           </Tooltip>
         </Box>
@@ -1165,7 +1335,7 @@ const CitationNetworkPage: React.FC = () => {
               <Button
                 variant="contained"
                 fullWidth
-                startIcon={<Visibility />}
+                startIcon={<OpenInNew />}
                 onClick={() => {
                   navigate(`/papers/${selectedNode.id}`);
                   setDrawerOpen(false);
