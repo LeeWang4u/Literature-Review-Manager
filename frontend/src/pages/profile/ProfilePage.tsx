@@ -17,6 +17,8 @@ const ProfilePage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  console.log('👤 User profile data:', user);
+
   if (!user) {
     return (
       <MainLayout>

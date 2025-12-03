@@ -271,4 +271,88 @@ export class AuthService {
     await this.usersService.updateLastLogin(user.id);
     return this.generateAuthResponse(user);
   }
+
+  // ✅ YÊU CẦU ĐỔI MẬT KHẨU VỚI OTP
+  async requestChangePasswordOtp(userId: number, currentPassword: string, newPassword: string): Promise<{ changePasswordToken: string; message: string }> {
+    const user = await this.usersService.findById(userId);
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+
+    if (!isPasswordValid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    // Don't allow same password
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      throw new BadRequestException('New password must be different from current password');
+    }
+
+    // Tạo OTP 6 chữ số
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    console.log('🔑 Generated OTP for change password:', otp);
+
+    // Hash mật khẩu mới
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    // Tạo token chứa userId, OTP và mật khẩu mới đã hash
+    const changePasswordToken = this.jwtService.sign(
+      {
+        userId: user.id,
+        otp,
+        newPassword: hashedNewPassword,
+        type: 'change-password',
+      },
+      { expiresIn: '10m' }, // Token hết hạn sau 10 phút
+    );
+
+    // Gửi OTP qua email
+    await this.emailService.sendChangePasswordOtp(user.email, otp, user.fullName);
+
+    return {
+      changePasswordToken,
+      message: 'OTP đã được gửi về email của bạn',
+    };
+  }
+
+  // ✅ XÁC THỰC OTP VÀ ĐỔI MẬT KHẨU
+  async verifyChangePasswordOtp(changePasswordToken: string, otp: string): Promise<{ message: string }> {
+    let payload: any;
+
+    try {
+      payload = this.jwtService.verify(changePasswordToken);
+    } catch (e) {
+      throw new BadRequestException('Token đã hết hạn hoặc không hợp lệ');
+    }
+
+    // Kiểm tra loại token
+    if (payload.type !== 'change-password') {
+      throw new BadRequestException('Token không hợp lệ');
+    }
+
+    // Kiểm tra OTP
+    if (payload.otp !== otp) {
+      throw new BadRequestException('OTP không đúng');
+    }
+
+    // Tìm user
+    const user = await this.usersService.findById(payload.userId);
+    if (!user) {
+      throw new BadRequestException('User không tồn tại');
+    }
+
+    // Cập nhật mật khẩu (đã được hash trong token)
+    await this.usersService.updatePassword(user.id, payload.newPassword);
+
+    // Gửi email thông báo
+    await this.emailService.sendPasswordChangedNotification(user.email, user.fullName);
+
+    return { message: 'Mật khẩu đã được cập nhật thành công' };
+  }
 }

@@ -10,10 +10,19 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     private configService: ConfigService,
     private authService: AuthService,
   ) {
+    const clientID = process.env.GOOGLE_CLIENT_ID || configService.get<string>('GOOGLE_CLIENT_ID') || 'dummy-client-id';
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || configService.get<string>('GOOGLE_CLIENT_SECRET') || 'dummy-client-secret';
+    const callbackURL = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/api/v1/auth/google/callback';
+    
+    // Warn if using dummy credentials
+    if (clientID === 'dummy-client-id' || clientID === 'your-google-client-id') {
+      console.warn('⚠️  Google OAuth credentials not configured. Google login will be disabled.');
+    }
+
     super({
-      clientID: process.env.GOOGLE_CLIENT_ID, //configService.get<string>('GOOGLE_CLIENT_ID'),
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || configService.get<string>('GOOGLE_CLIENT_SECRET'),
-      callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/api/v1/auth/google/callback',
+      clientID,
+      clientSecret,
+      callbackURL,
       scope: ['email', 'profile'],
     });
   }

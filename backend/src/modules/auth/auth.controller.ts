@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto, ResetPasswordDto } from './dto/reset-password.dto';
+import { RequestChangePasswordDto, VerifyChangePasswordDto } from './dto/change-password-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
@@ -98,5 +99,28 @@ export class AuthController {
     // Redirect to frontend with token
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     res.redirect(`${frontendUrl}/auth/google/callback?token=${authResponse.accessToken}`);
+  }
+
+  @Post('request-change-password-otp')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Request OTP for password change (for logged-in users)' })
+  @ApiResponse({ status: 200, description: 'OTP sent to email successfully' })
+  @ApiResponse({ status: 400, description: 'Current password is incorrect' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async requestChangePasswordOtp(@Request() req, @Body() dto: RequestChangePasswordDto) {
+    return await this.authService.requestChangePasswordOtp(
+      req.user.id,
+      dto.currentPassword,
+      dto.newPassword
+    );
+  }
+
+  @Post('verify-change-password-otp')
+  @ApiOperation({ summary: 'Verify OTP and change password' })
+  @ApiResponse({ status: 200, description: 'Password changed successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid OTP or token expired' })
+  async verifyChangePasswordOtp(@Body() dto: VerifyChangePasswordDto) {
+    return await this.authService.verifyChangePasswordOtp(dto.changePasswordToken, dto.otp);
   }
 }

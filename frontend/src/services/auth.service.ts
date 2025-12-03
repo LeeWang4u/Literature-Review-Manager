@@ -89,6 +89,28 @@ export const authService = {
     console.log('✅ AuthService: Password reset response:', response.data);
     return response.data;
   },
+
+  // Request Change Password OTP - Gửi OTP để đổi mật khẩu
+  requestChangePasswordOtp: async (data: {
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<{ changePasswordToken: string; message: string }> => {
+    console.log('📤 AuthService: Requesting change password OTP...');
+    const response = await axiosInstance.post('/auth/request-change-password-otp', data);
+    console.log('✅ AuthService: Change password OTP response:', response.data);
+    return response.data;
+  },
+
+  // Verify Change Password OTP - Xác thực OTP và đổi mật khẩu
+  verifyChangePasswordOtp: async (data: {
+    changePasswordToken: string;
+    otp: string;
+  }): Promise<{ message: string }> => {
+    console.log('📤 AuthService: Verifying change password OTP...');
+    const response = await axiosInstance.post('/auth/verify-change-password-otp', data);
+    console.log('✅ AuthService: Password changed successfully:', response.data);
+    return response.data;
+  },
 };
 
 export const userService = {

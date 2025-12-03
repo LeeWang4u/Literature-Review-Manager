@@ -57,6 +57,75 @@ export class PaperMetadataService {
   }
 
   /**
+   * Process references from Semantic Scholar API with year extraction from title
+   */
+  private processReferences(rawReferences: any[], includeInfluential: boolean = true): PaperMetadata['references'] {
+    return rawReferences
+      .filter((ref: any) => ref.title)  // Only keep refs with title
+      .map((ref: any, index: number) => {
+        let year = ref.year;
+        
+        // If year is not provided, try to extract from title
+        if (!year && ref.title) {
+          const currentYear = new Date().getFullYear();
+          const minYear = 1900;
+          const maxYear = currentYear + 1;
+          
+          // Try multiple patterns to extract year:
+          // 1. (2021) - year in parentheses
+          // 2. [2021] - year in square brackets  
+          // 3. 2021. or 2021, - year followed by punctuation
+          // 4. Standalone 4-digit number that looks like a year
+          const patterns = [
+            /\((\d{4})\)/g,           // (2021)
+            /\[(\d{4})\]/g,           // [2021]
+            /\b(\d{4})[.,;]\s/g,      // 2021. or 2021, followed by space
+            /\b(19\d{2}|20\d{2})\b/g, // Any year 1900-2099
+          ];
+          
+          let extractedYear: number | null = null;
+          
+          for (const pattern of patterns) {
+            const matches = Array.from(ref.title.matchAll(pattern));
+            if (matches.length > 0) {
+              // Take the last match (usually the publication year)
+              const lastMatch = matches[matches.length - 1];
+              const yearNum = parseInt(lastMatch[1]);
+              
+              // Validate year is reasonable
+              if (yearNum >= minYear && yearNum <= maxYear) {
+                extractedYear = yearNum;
+                if (index < 3) {
+                  this.logger.log(`  Extracted year ${yearNum} from pattern ${pattern} in: "${ref.title.substring(0, 60)}..."`);
+                }
+                break; // Use first successful pattern
+              }
+            }
+          }
+          
+          if (extractedYear) {
+            year = extractedYear;
+          } else if (index < 3) {
+            this.logger.log(`  No valid year found in: "${ref.title.substring(0, 60)}..."`);
+          }
+        }
+        
+        const processedRef: any = {
+          title: ref.title || '',
+          authors: ref.authors?.map((a: any) => a.name).filter((name: string) => name?.length > 0).join(', ') || '',
+          year: year,
+          doi: ref.externalIds?.DOI || '',
+        };
+        
+        if (includeInfluential) {
+          processedRef.isInfluential = ref.isInfluential || false;
+        }
+        
+        return processedRef;
+      });
+  }
+
+  /**
    * Extract metadata from DOI or URL, fetching from multiple sources and merging results for completeness.
    */
   async extractMetadata(input: string): Promise<PaperMetadata> {
@@ -339,10 +408,7 @@ export class PaperMetadataService {
           timeout: 15000,
           headers: { 'User-Agent': 'LiteratureReviewApp/1.0 (mailto:support@example.com)' },
         });
-        refs = response.data.references?.map((ref: any) => ({
-          title: ref.title || '',
-          doi: ref.externalIds?.DOI || '',
-        })) || [];
+        refs = this.processReferences(response.data.references || [], false);
         if (refs.length > 0) {
           return refs;
         }
@@ -498,39 +564,7 @@ export class PaperMetadataService {
     }
     
     // Sort by influential first, then by year (newest first)
-    references = references
-      .filter((ref: any) => ref.title)  // Only keep refs with title
-      .map((ref: any, index: number) => {
-        let year = ref.year;
-        
-        // If year is not provided, try to extract from title (citation format)
-        if (!year && ref.title) {
-          // Match patterns like: (2021), (2024), etc. at the end or in parentheses
-          const yearMatch = ref.title.match(/\((\d{4})\)/g);
-          if (yearMatch && yearMatch.length > 0) {
-            // Take the last year found (usually the publication year)
-            const lastYear = yearMatch[yearMatch.length - 1];
-            const extractedYear = parseInt(lastYear.replace(/[()]/g, ''));
-            // Validate year is reasonable (between 1900 and current year + 1)
-            if (extractedYear >= 1900 && extractedYear <= new Date().getFullYear() + 1) {
-              year = extractedYear;
-              if (index < 3) {
-                this.logger.log(`  Extracted year ${year} from: "${ref.title.substring(0, 60)}..."`);
-              }
-            }
-          } else if (index < 3) {
-            this.logger.log(`  No year pattern found in: "${ref.title.substring(0, 60)}..."`);
-          }
-        }
-        
-        return {
-          title: ref.title || '',
-          authors: ref.authors?.map((a: any) => a.name).filter((name: string) => name?.length > 0).join(', ') || '',
-          year: year,
-          doi: ref.externalIds?.DOI || '',
-          isInfluential: ref.isInfluential || false,
-        };
-      })
+    references = this.processReferences(references, true)
       .sort((a: any, b: any) => {
         // Influential papers first
         if (a.isInfluential && !b.isInfluential) return -1;
@@ -703,13 +737,7 @@ export class PaperMetadataService {
         },
       });
 
-      const refs = response.data.references?.map((ref: any) => ({
-        title: ref.title || '',
-        authors: ref.authors?.map((a: any) => a.name).join(', ') || '',
-        year: ref.year || null,
-        doi: ref.externalIds?.DOI || '',
-        isInfluential: ref.isInfluential || false,
-      })) || [];
+      const refs = this.processReferences(response.data.references || [], true);
 
       this.logger.log(`✅ Found ${refs.length} references`);
       return refs;
