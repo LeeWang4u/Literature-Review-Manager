@@ -182,6 +182,39 @@ export class EmailService {
             this.logger.error(`Failed to send password changed notification to ${email}:`, error);
         }
     }
+
+    // ✅ GỬI OTP ĐỔI MẬT KHẨU
+    async sendChangePasswordOtp(email: string, otp: string, fullName: string): Promise<void> {
+        const mailOptions = {
+            from: process.env.MAIL_USER,
+            to: email,
+            subject: 'Change Password Verification - Literature Review Manager',
+            html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Change Password Request</h2>
+          <p>Hi ${fullName},</p>
+          <p>You requested to change your password. Use the OTP code below to verify this change:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <div style="background-color: #f0f0f0; padding: 20px; border-radius: 8px; display: inline-block;">
+              <h1 style="margin: 0; color: #333; font-size: 36px; letter-spacing: 5px;">${otp}</h1>
+            </div>
+          </div>
+          <p><strong>This OTP will expire in 10 minutes.</strong></p>
+          <p>If you didn't request a password change, please ignore this email and secure your account.</p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+          <p style="color: #999; font-size: 12px;">Literature Review Manager</p>
+        </div>
+      `,
+        };
+
+        try {
+            await this.transporter.sendMail(mailOptions);
+            this.logger.log(`Change password OTP sent to ${email}`);
+        } catch (error) {
+            this.logger.error(`Failed to send change password OTP to ${email}:`, error);
+            throw error;
+        }
+    }
 }
 
 // import * as nodemailer from 'nodemailer';

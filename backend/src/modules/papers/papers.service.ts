@@ -335,7 +335,7 @@ export class PapersService {
           const refIdentifier = ref.doi || ref.title;
           if (refsToAutoRate.has(refIdentifier)) {
             // Tự động đánh giá mức độ liên quan bằng AI (chạy async, không chờ)
-            this.citationsService.autoRateRelevance(newCitation.id, userId).catch(err => {
+            this.citationsService.autoRateRelevance(newCitation.id).catch(err => {
               console.error(`Failed to auto-rate citation ${newCitation.id}:`, err.message);
             });
           }
@@ -678,7 +678,7 @@ export class PapersService {
       };
       
       // Upload to PDF service
-      await this.pdfService.uploadPdf(paperId, userId, fileObject);
+      await this.pdfService.uploadPdf(paperId, fileObject);
       
       this.logger.log(`✅ Auto-downloaded and processed ArXiv PDF for paper ${paperId}`);
     } catch (error) {
@@ -780,7 +780,7 @@ export class PapersService {
       };
 
       // Upload to PDF service (this will extract text and store in database)
-      await this.pdfService.uploadPdf(refPaper.id, userId, fileObject);
+      await this.pdfService.uploadPdf(refPaper.id, fileObject);
       this.logger.log(`✅ [Depth ${depth}] PDF uploaded and processed for paper ${refPaper.id}`);
 
       // 🔥 Recursive: Fetch references of this reference (if depth < maxDepth)

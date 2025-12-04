@@ -7,7 +7,6 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { User } from '../users/user.entity';
 import { Paper } from '../papers/paper.entity';
 import { ApiHideProperty, ApiProperty } from '@nestjs/swagger';
 
@@ -34,9 +33,6 @@ export class Citation {
   @Column({ name: 'is_influential', type: 'boolean', default: false })
   isInfluential: boolean;
 
-  @Column({ name: 'created_by' })
-  createdById: number;
-
   // Hierarchical citation support
   @Column({ name: 'citation_depth', type: 'int', default: 0 })
   citationDepth: number; // 0 = direct citation, 1 = citation of citation, etc.
@@ -59,11 +55,6 @@ export class Citation {
   @Column({ name: 'note_id', nullable: true })
   noteId: number; // Link to auto-generated note
 
-  // Alias for compatibility with services
-  get userId(): number {
-    return this.createdById;
-  }
-
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
@@ -82,8 +73,4 @@ export class Citation {
   @ManyToOne(() => Paper, (paper) => paper.citedBy)
   @JoinColumn({ name: 'cited_paper_id' })
   citedPaper: Paper;
-
-  @ManyToOne(() => User, (user) => user.citations)
-  @JoinColumn({ name: 'created_by' })
-  createdBy: User;
 }

@@ -209,7 +209,7 @@ export class PapersController {
     @Param('id', ParseIntPipe) id: number,
     @Request() req,
   ) {
-    return this.citationsService.autoRateAllReferences(id, req.user.id);
+    return this.citationsService.autoRateAllReferences(id);
   }
 
   @Post(':id/fetch-nested-references')

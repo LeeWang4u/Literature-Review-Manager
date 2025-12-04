@@ -7,12 +7,18 @@ import {
   Button,
   Box,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import { Lock as LockIcon } from '@mui/icons-material';
 import { authService } from '@/services/auth.service';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 const ChangePasswordPage: React.FC = () => {
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     currentPassword: '',
     newPassword: '',
@@ -20,6 +26,12 @@ const ChangePasswordPage: React.FC = () => {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // OTP Dialog state
+  const [showOtpDialog, setShowOtpDialog] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [changePasswordToken, setChangePasswordToken] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -52,12 +64,39 @@ const ChangePasswordPage: React.FC = () => {
     setLoading(true);
 
     try {
-      await authService.changePassword({
+      const response = await authService.requestChangePasswordOtp({
         currentPassword: formData.currentPassword,
         newPassword: formData.newPassword,
       });
 
-      toast.success('Password changed successfully!');
+      setChangePasswordToken(response.changePasswordToken);
+      toast.success('OTP đã được gửi về email của bạn!');
+      setShowOtpDialog(true);
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.message || 'Failed to request OTP';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!otp || otp.length !== 6) {
+      toast.error('Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    setOtpLoading(true);
+
+    try {
+      const response = await authService.verifyChangePasswordOtp({
+        changePasswordToken,
+        otp,
+      });
+
+      toast.success(response.message || 'Password changed successfully!');
+      setShowOtpDialog(false);
       
       // Reset form
       setFormData({
@@ -65,13 +104,25 @@ const ChangePasswordPage: React.FC = () => {
         newPassword: '',
         confirmPassword: '',
       });
+      setOtp('');
+      setChangePasswordToken('');
+
+      // Redirect to profile or login page after a delay
+      setTimeout(() => {
+        navigate('/profile');
+      }, 1500);
     } catch (err: any) {
-      const errorMessage = err.response?.data?.message || 'Failed to change password';
-      setError(errorMessage);
+      const errorMessage = err.response?.data?.message || 'Invalid OTP';
       toast.error(errorMessage);
     } finally {
-      setLoading(false);
+      setOtpLoading(false);
     }
+  };
+
+
+  const handleCloseOtpDialog = () => {
+    setShowOtpDialog(false);
+    setOtp('');
   };
 
   return (
@@ -140,11 +191,43 @@ const ChangePasswordPage: React.FC = () => {
               sx={{ mt: 3 }}
               disabled={loading}
             >
-              {loading ? 'Changing Password...' : 'Change Password'}
+              {loading ? 'Sending OTP...' : 'Continue'}
             </Button>
           </Box>
         </Paper>
       </Box>
+
+      {/* OTP Verification Dialog */}
+      <Dialog open={showOtpDialog} onClose={handleCloseOtpDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>Verify OTP</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            We've sent a 6-digit OTP code to your email. Please enter it below to complete the password change.
+          </Typography>
+          <TextField
+            fullWidth
+            label="Enter OTP"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            placeholder="123456"
+            inputProps={{ maxLength: 6 }}
+            disabled={otpLoading}
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseOtpDialog} disabled={otpLoading}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleVerifyOtp} 
+            variant="contained" 
+            disabled={otpLoading || otp.length !== 6}
+          >
+            {otpLoading ? 'Verifying...' : 'Verify & Change Password'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };

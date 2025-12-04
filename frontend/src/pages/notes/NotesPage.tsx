@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Container,
@@ -14,7 +14,7 @@ import {
   TextField,
   InputAdornment,
 } from '@mui/material';
-import { Add, Search } from '@mui/icons-material';
+import { Add, Search, ArrowBack } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { NoteCard } from '@/components/notes/NoteCard';
 import { NoteDialog, NoteFormData} from '@/components/notes/NoteDialog';
@@ -25,6 +25,7 @@ import toast from 'react-hot-toast';
 
 const NotesPage: React.FC = () => {
   const { paperId } = useParams<{ paperId: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
@@ -151,22 +152,35 @@ const NotesPage: React.FC = () => {
       <Container maxWidth="lg">
         {/* Header */}
         <Box mb={4}>
-          <Typography variant="h4" gutterBottom fontWeight="bold">
-            Notes
-          </Typography>
-          {paper && (
-            <Box>
-              <Typography variant="subtitle1" color="textSecondary">
-                Paper: {paper.title}
+          <Box display="flex" justifyContent="space-between" alignItems="center" gap={2}>
+            <Box display="flex" alignItems="center" gap={2}>
+              <Button
+                startIcon={<ArrowBack />}
+                onClick={() => navigate(-1)}
+                variant="outlined"
+              >
+                Back
+              </Button>
+
+              <Typography variant="h4" gutterBottom fontWeight="bold">
+                Notes
               </Typography>
-              <Chip 
-                label={`${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`} 
-                size="small" 
-                color="primary"
-                sx={{ mt: 1 }}
-              />
             </Box>
-          )}
+
+            {paper && (
+              <Box textAlign="right">
+                <Typography variant="subtitle1" color="textSecondary">
+                  Paper: {paper.title}
+                </Typography>
+                <Chip
+                  label={`${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`}
+                  size="small"
+                  color="primary"
+                  sx={{ mt: 1 }}
+                />
+              </Box>
+            )}
+          </Box>
         </Box>
 
         {/* Action Bar */}
