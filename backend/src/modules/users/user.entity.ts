@@ -67,13 +67,4 @@ export class User {
 
   @OneToMany(() => UserLibrary, (library) => library.user)
   library: UserLibrary[];
-
-  @OneToMany(() => Note, (note) => note.user)
-  notes: Note[];
-
-  @OneToMany(() => Citation, (citation) => citation.createdBy)
-  citations: Citation[];
-
-  @OneToMany(() => PdfFile, (pdf) => pdf.uploadedBy)
-  uploadedFiles: PdfFile[];
 }

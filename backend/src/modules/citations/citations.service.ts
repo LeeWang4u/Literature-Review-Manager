@@ -33,7 +33,7 @@ export class CitationsService {
     }
   }
 
-  async create(userId: number, createCitationDto: CreateCitationDto): Promise<Citation> {
+  async create(createCitationDto: CreateCitationDto): Promise<Citation> {
     const { citingPaperId, citedPaperId } = createCitationDto;
 
     // Prevent self-citation
@@ -43,11 +43,11 @@ export class CitationsService {
 
     // Check if both papers exist
     const citingPaper = await this.papersRepository.findOne({
-      where: { id: citingPaperId, addedBy: userId },
+      where: { id: citingPaperId },
     });
 
     const citedPaper = await this.papersRepository.findOne({
-      where: { id: citedPaperId, addedBy: userId },
+      where: { id: citedPaperId },
     });
 
     if (!citingPaper || !citedPaper) {
@@ -66,16 +66,15 @@ export class CitationsService {
     const citation = this.citationsRepository.create({
       citingPaperId,
       citedPaperId,
-      userId,
     });
 
     return await this.citationsRepository.save(citation);
   }
 
-  async findByPaper(paperId: number, userId: number) {
-    // Verify paper belongs to user
+  async findByPaper(paperId: number) {
+    // Verify paper exists
     const paper = await this.papersRepository.findOne({
-      where: { id: paperId, addedBy: userId },
+      where: { id: paperId },
     });
 
     if (!paper) {
@@ -100,18 +99,13 @@ export class CitationsService {
     };
   }
 
-  async getCitationNetwork(paperId: number, userId: number, depth: number = 2) {
-    // Verify paper exists and user has access (either owns it or it's a reference)
+  async getCitationNetwork(paperId: number, depth: number = 2) {
+    // Verify paper exists
     const rootPaper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!rootPaper) {
-      throw new NotFoundException('Paper not found');
-    }
-
-    // If paper is not a reference, verify ownership
-    if (!rootPaper.isReference && rootPaper.addedBy !== userId) {
       throw new NotFoundException('Paper not found');
     }
 
@@ -277,7 +271,6 @@ export class CitationsService {
         citingTitle: c.citingPaper?.title,
         citedId: c.citedPaperId,
         citedTitle: c.citedPaper?.title,
-        createdBy: c.createdBy?.id,
         relevanceScore: c.relevanceScore,
         isInfluential: c.isInfluential,
       })),
@@ -287,17 +280,16 @@ export class CitationsService {
         citingTitle: c.citingPaper?.title,
         citedId: c.citedPaperId,
         citedTitle: c.citedPaper?.title,
-        createdBy: c.createdBy?.id,
         relevanceScore: c.relevanceScore,
         isInfluential: c.isInfluential,
       })),
     };
   }
 
-  async getCitationStats(paperId: number, userId: number) {
-    // Verify paper belongs to user
+  async getCitationStats(paperId: number) {
+    // Verify paper exists
     const paper = await this.papersRepository.findOne({
-      where: { id: paperId, addedBy: userId },
+      where: { id: paperId },
     });
 
     if (!paper) {
@@ -318,10 +310,10 @@ export class CitationsService {
     };
   }
 
-  async getReferences(paperId: number, userId: number): Promise<Citation[]> {
-    // Verify paper belongs to user
+  async getReferences(paperId: number): Promise<Citation[]> {
+    // Verify paper exists
     const paper = await this.papersRepository.findOne({
-      where: { id: paperId, addedBy: userId },
+      where: { id: paperId },
     });
 
     if (!paper) {
@@ -339,10 +331,10 @@ export class CitationsService {
     });
   }
 
-  async getCitedBy(paperId: number, userId: number): Promise<Citation[]> {
-    // Verify paper belongs to user
+  async getCitedBy(paperId: number): Promise<Citation[]> {
+    // Verify paper exists
     const paper = await this.papersRepository.findOne({
-      where: { id: paperId, addedBy: userId },
+      where: { id: paperId },
     });
 
     if (!paper) {
@@ -360,9 +352,9 @@ export class CitationsService {
     });
   }
 
-  async remove(id: number, userId: number): Promise<void> {
+  async remove(id: number): Promise<void> {
     const citation = await this.citationsRepository.findOne({
-      where: { id, createdById: userId },
+      where: { id },
     });
 
     if (!citation) {
@@ -372,7 +364,7 @@ export class CitationsService {
     await this.citationsRepository.remove(citation);
   }
 
-  async update(id: number, userId: number, updateCitationDto: UpdateCitationDto): Promise<Citation> {
+  async update(id: number, updateCitationDto: UpdateCitationDto): Promise<Citation> {
     const citation = await this.citationsRepository.findOne({
       where: { id },
       relations: ['citingPaper', 'citedPaper'],
@@ -380,15 +372,6 @@ export class CitationsService {
 
     if (!citation) {
       throw new NotFoundException('Citation not found');
-    }
-
-    // Verify user owns the citing paper
-    const citingPaper = await this.papersRepository.findOne({
-      where: { id: citation.citingPaperId, addedBy: userId },
-    });
-
-    if (!citingPaper) {
-      throw new NotFoundException('You do not have permission to update this citation');
     }
 
     // Update only provided fields
@@ -407,7 +390,7 @@ export class CitationsService {
    * AI-powered relevance scoring for a citation
    * Analyzes the relationship between citing and cited papers
    */
-  async autoRateRelevance(citationId: number, userId: number): Promise<Citation> {
+  async autoRateRelevance(citationId: number): Promise<Citation> {
     if (!this.model) {
       throw new BadRequestException('AI service is not configured. Please set GEMINI_API_KEY.');
     }
@@ -419,15 +402,6 @@ export class CitationsService {
 
     if (!citation) {
       throw new NotFoundException('Citation not found');
-    }
-
-    // Verify user owns the citing paper
-    const citingPaper = await this.papersRepository.findOne({
-      where: { id: citation.citingPaperId, addedBy: userId },
-    });
-
-    if (!citingPaper) {
-      throw new NotFoundException('You do not have permission to update this citation');
     }
 
     const citing = citation.citingPaper;
@@ -549,8 +523,8 @@ Where:
   /**
    * Batch AI rating for all citations of a paper
    */
-  async autoRateAllReferences(paperId: number, userId: number): Promise<{ rated: number; failed: number; citations: Citation[] }> {
-    const citations = await this.getReferences(paperId, userId);
+  async autoRateAllReferences(paperId: number): Promise<{ rated: number; failed: number; citations: Citation[] }> {
+    const citations = await this.getReferences(paperId);
     
     let rated = 0;
     let failed = 0;
@@ -558,7 +532,7 @@ Where:
 
     for (const citation of citations) {
       try {
-        const updated = await this.autoRateRelevance(citation.id, userId);
+        const updated = await this.autoRateRelevance(citation.id);
         results.push(updated);
         rated++;
         
@@ -598,14 +572,13 @@ Where:
    */
   async analyzeReferences(
     paperId: number, 
-    userId: number, 
     options: AnalyzeReferencesDto = {}
   ): Promise<ReferenceAnalysisResult> {
     const { limit = 10, minRelevance = 0.5 } = options;
 
-    // Verify paper belongs to user
+    // Verify paper exists
     const paper = await this.papersRepository.findOne({
-      where: { id: paperId, addedBy: userId },
+      where: { id: paperId },
     });
 
     if (!paper) {

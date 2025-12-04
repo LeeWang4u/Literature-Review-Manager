@@ -8,17 +8,13 @@ import {
   JoinColumn,
   Index,
 } from 'typeorm';
-import { User } from '../users/user.entity';
 import { Paper } from '../papers/paper.entity';
 
 @Entity('notes')
-@Index(['userId', 'paperId'])
+@Index(['paperId'])
 export class Note {
   @PrimaryGeneratedColumn()
   id: number;
-
-  @Column({ name: 'user_id' })
-  userId: number;
 
   @Column({ name: 'paper_id' })
   @Index()
@@ -44,10 +40,6 @@ export class Note {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
-
-  @ManyToOne(() => User, (user) => user.notes)
-  @JoinColumn({ name: 'user_id' })
-  user: User;
 
   @ManyToOne(() => Paper, (paper) => paper.notes)
   @JoinColumn({ name: 'paper_id' })
