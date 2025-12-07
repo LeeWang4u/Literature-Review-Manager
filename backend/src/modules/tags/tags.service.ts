@@ -47,6 +47,18 @@ export class TagsService {
 
   async update(id: number, updateTagDto: UpdateTagDto): Promise<Tag> {
     const tag = await this.findOne(id);
+    
+    // Check if new name conflicts with existing tag
+    if (updateTagDto.name && updateTagDto.name !== tag.name) {
+      const existing = await this.tagsRepository.findOne({
+        where: { name: updateTagDto.name },
+      });
+      
+      if (existing) {
+        throw new ConflictException('Tag name already exists');
+      }
+    }
+    
     Object.assign(tag, updateTagDto);
     return await this.tagsRepository.save(tag);
   }

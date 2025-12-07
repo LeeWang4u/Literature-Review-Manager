@@ -96,12 +96,26 @@ export const TagCard: React.FC<TagCardProps> = ({ tag, paperCount = 0, onEdit, o
       {/* Actions */}
       <CardActions sx={{ justifyContent: 'flex-end', pt: 0 }}>
         <Tooltip title="Edit Tag">
-          <IconButton size="small" color="primary" onClick={() => onEdit(tag)}>
+          <IconButton 
+            size="small" 
+            color="primary" 
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(tag);
+            }}
+          >
             <Edit />
           </IconButton>
         </Tooltip>
         <Tooltip title="Delete Tag">
-          <IconButton size="small" color="error" onClick={handleDelete}>
+          <IconButton 
+            size="small" 
+            color="error" 
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDelete();
+            }}
+          >
             <Delete />
           </IconButton>
         </Tooltip>
