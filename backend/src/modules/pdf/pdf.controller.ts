@@ -88,6 +88,18 @@ export class PdfController {
     return this.pdfService.findOne(id);
   }
 
+  @Get('view/:id')
+  @ApiOperation({ summary: 'Get PDF file URL for viewing' })
+  @ApiResponse({ status: 200, description: 'Return PDF file URL' })
+  @ApiResponse({ status: 404, description: 'PDF file not found' })
+  async getViewUrl(@Param('id', ParseIntPipe) id: number) {
+    const pdfFile = await this.pdfService.findOne(id);
+    return {
+      url: pdfFile.cloudinaryUrl,
+      filename: pdfFile.originalFilename,
+    };
+  }
+
   @Get('download/:id')
   @ApiOperation({ summary: 'Download a PDF file' })
   @ApiResponse({ status: 200, description: 'Return PDF file' })

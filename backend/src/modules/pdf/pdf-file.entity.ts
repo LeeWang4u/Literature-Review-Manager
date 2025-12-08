@@ -21,8 +21,14 @@ export class PdfFile {
   @Column({ name: 'file_name', length: 255 })
   fileName: string;
 
-  @Column({ name: 'file_path', length: 500 })
+  @Column({ name: 'file_path', length: 500, nullable: true })
   filePath: string;
+
+  @Column({ name: 'cloudinary_public_id', length: 500, nullable: true })
+  cloudinaryPublicId: string;
+
+  @Column({ name: 'cloudinary_url', length: 1000, nullable: true })
+  cloudinaryUrl: string;
 
   @Column({ name: 'file_size', type: 'bigint', nullable: true })
   fileSize: number;

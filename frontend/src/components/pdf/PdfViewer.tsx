@@ -67,16 +67,24 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
   const handlePreview = async (pdf: PdfFile) => {
     console.log('🔍 Preview clicked for PDF:', pdf);
     try {
+      // Use Cloudinary URL directly if available
+      if (pdf.cloudinaryUrl) {
+        console.log('🔗 Using Cloudinary URL:', pdf.cloudinaryUrl);
+        setPreviewUrl(pdf.cloudinaryUrl);
+        setPreviewFilename(pdf.originalFilename);
+        setPreviewOpen(true);
+        return;
+      }
+
+      // Fallback to download endpoint for legacy files
       console.log('📡 Fetching PDF from API:', `/pdf/download/${pdf.id}`);
       
-      // Fetch PDF with authentication
       const response = await axiosInstance.get(`/pdf/download/${pdf.id}`, {
         responseType: 'blob',
       });
       
       console.log('✅ PDF fetched successfully, size:', response.data.size, 'bytes');
       
-      // Create a local blob URL for preview
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       
@@ -93,8 +101,8 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
 
   const handleClosePreview = () => {
     setPreviewOpen(false);
-    // Clean up blob URL to prevent memory leak
-    if (previewUrl) {
+    // Clean up blob URL to prevent memory leak (only for local blob URLs, not Cloudinary URLs)
+    if (previewUrl && previewUrl.startsWith('blob:')) {
       window.URL.revokeObjectURL(previewUrl);
     }
     setPreviewUrl(null);

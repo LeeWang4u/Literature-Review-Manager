@@ -96,26 +96,32 @@ export class PapersService {
         .add(tagIds);
     }
 
-    // 🔥 Auto-download PDF from ArXiv if URL is ArXiv
-    if (paperData.url && paperData.url.includes('arxiv.org')) {
-      this.autoDownloadArxivPdf(savedPaper.id, paperData.url, userId).catch(err => {
-        this.logger.error(`Failed to auto-download ArXiv PDF for paper ${savedPaper.id}: ${err.message}`);
-      });
-    }
-
-    // Xử lý references với AI parsing và auto-download workflow
-    if (references && references.length > 0) {
-      // Kick off async processing sau khi return response
-      this.processReferencesWithAutoDownload(savedPaper, references, userId).catch(err => {
-        this.logger.error(`Failed to process references for paper ${savedPaper.id}: ${err.message}`);
-      });
-    }
-
+    // Add to library first
     const addToLibraryDto = {
       paperId: savedPaper.id,
     }
 
     await this.libraryService.addToLibrary(userId, addToLibraryDto);
+
+    // 🔥 Auto-download PDF from ArXiv if URL is ArXiv (after all DB operations)
+    if (paperData.url && paperData.url.includes('arxiv.org')) {
+      // Use setTimeout with small delay to ensure DB transaction is committed
+      setTimeout(() => {
+        this.autoDownloadArxivPdf(savedPaper.id, paperData.url, userId).catch(err => {
+          this.logger.error(`Failed to auto-download ArXiv PDF for paper ${savedPaper.id}: ${err.message}`);
+        });
+      }, 1000); // 1 second delay to ensure DB commit
+    }
+
+    // Xử lý references với AI parsing và auto-download workflow
+    if (references && references.length > 0) {
+      // Kick off async processing sau khi return response
+      setTimeout(() => {
+        this.processReferencesWithAutoDownload(savedPaper, references, userId).catch(err => {
+          this.logger.error(`Failed to process references for paper ${savedPaper.id}: ${err.message}`);
+        });
+      }, 1000);
+    }
 
     return {
       success: true,
@@ -648,6 +654,13 @@ export class PapersService {
       // Download PDF buffer
       const pdfBuffer = await this.paperMetadataService.downloadArxivPdf(arxivId);
       
+      // Check file size before saving (Cloudinary free tier: 10MB max)
+      const maxSize = 10 * 1024 * 1024; // 10MB
+      if (pdfBuffer.length > maxSize) {
+        this.logger.warn(`⚠️ PDF too large for auto-download: ${(pdfBuffer.length / 1024 / 1024).toFixed(2)}MB (max 10MB). Skipping auto-download for paper ${paperId}`);
+        return;
+      }
+      
       // Save to temp file
       const uploadsDir = path.join(process.cwd(), 'uploads');
       if (!fs.existsSync(uploadsDir)) {
@@ -658,7 +671,7 @@ export class PapersService {
       const tempFilePath = path.join(uploadsDir, tempFilename);
       fs.writeFileSync(tempFilePath, pdfBuffer);
       
-      this.logger.log(`💾 Saved temp file: ${tempFilePath}`);
+      this.logger.log(`💾 Saved temp file: ${tempFilePath} (${(pdfBuffer.length / 1024 / 1024).toFixed(2)}MB)`);
       
       // Get file stats
       const fileStats = fs.statSync(tempFilePath);

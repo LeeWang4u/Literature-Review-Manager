@@ -222,7 +222,9 @@ export interface PdfFile {
   paperId: number;
   fileName: string;
   originalFilename: string;
-  filePath: string;
+  filePath?: string; // Optional now (legacy field)
+  cloudinaryPublicId?: string;
+  cloudinaryUrl?: string;
   fileSize: number;
   mimeType: string;
   version: number;
