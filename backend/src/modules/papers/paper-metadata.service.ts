@@ -24,7 +24,6 @@ export interface PaperMetadata {
     authors?: string;
     year?: number;
     doi?: string;
-    isInfluential?: boolean;
   }[];
 }
 
@@ -36,7 +35,7 @@ export class PaperMetadataService {
   private readonly arxivApiBaseUrl = 'http://export.arxiv.org/api/query';
   private readonly semanticScholarApiKey = process.env.SEMANTIC_SCHOLAR_API_KEY || '';
   private genAI: GoogleGenerativeAI;
-  
+
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -46,7 +45,7 @@ export class PaperMetadataService {
       this.logger.log('✅ Gemini AI initialized for DOI finding');
     }
   }
-  
+
   private getSemanticScholarHeaders() {
     const headers: any = {};
     if (this.semanticScholarApiKey) {
@@ -59,18 +58,18 @@ export class PaperMetadataService {
   /**
    * Process references from Semantic Scholar API with year extraction from title
    */
-  private processReferences(rawReferences: any[], includeInfluential: boolean = true): PaperMetadata['references'] {
+  private processReferences(rawReferences: any[]): PaperMetadata['references'] {
     return rawReferences
       .filter((ref: any) => ref.title)  // Only keep refs with title
       .map((ref: any, index: number) => {
         let year = ref.year;
-        
+
         // If year is not provided, try to extract from title
         if (!year && ref.title) {
           const currentYear = new Date().getFullYear();
           const minYear = 1900;
           const maxYear = currentYear + 1;
-          
+
           // Try multiple patterns to extract year:
           // 1. (2021) - year in parentheses
           // 2. [2021] - year in square brackets  
@@ -82,16 +81,16 @@ export class PaperMetadataService {
             /\b(\d{4})[.,;]\s/g,      // 2021. or 2021, followed by space
             /\b(19\d{2}|20\d{2})\b/g, // Any year 1900-2099
           ];
-          
+
           let extractedYear: number | null = null;
-          
+
           for (const pattern of patterns) {
             const matches = Array.from(ref.title.matchAll(pattern));
             if (matches.length > 0) {
               // Take the last match (usually the publication year)
               const lastMatch = matches[matches.length - 1];
               const yearNum = parseInt(lastMatch[1]);
-              
+
               // Validate year is reasonable
               if (yearNum >= minYear && yearNum <= maxYear) {
                 extractedYear = yearNum;
@@ -102,26 +101,20 @@ export class PaperMetadataService {
               }
             }
           }
-          
+
           if (extractedYear) {
             year = extractedYear;
           } else if (index < 3) {
             this.logger.log(`  No valid year found in: "${ref.title.substring(0, 60)}..."`);
           }
         }
-        
-        const processedRef: any = {
+
+        return {
           title: ref.title || '',
           authors: ref.authors?.map((a: any) => a.name).filter((name: string) => name?.length > 0).join(', ') || '',
           year: year,
           doi: ref.externalIds?.DOI || '',
         };
-        
-        if (includeInfluential) {
-          processedRef.isInfluential = ref.isInfluential || false;
-        }
-        
-        return processedRef;
       });
   }
 
@@ -145,9 +138,40 @@ export class PaperMetadataService {
       }
     }
 
-    let s2Identifier = doi || (arxivId ? `arXiv:${arxivId}` : inputUrl);
+    // let s2Identifier = doi || (arxivId ? `arXiv:${arxivId}` : inputUrl);
+    // if (s2Identifier) {
+    //   const s2Metadata = await this.fetchFromSemanticScholar(s2Identifier).catch(() => null);
+    //   if (s2Metadata) {
+    //     metadataSources.push(s2Metadata);
+    //   }
+    // }
+
+    let s2Identifier: string | null = null;
+    if (doi) {
+      s2Identifier = `DOI:${doi}`; // Semantic Scholar expects "DOI:..." format
+    } else if (arxivId) {
+      s2Identifier = `ArXiv:${arxivId}`;
+    } else if (inputUrl) {
+      s2Identifier = inputUrl;
+    }
+
     if (s2Identifier) {
-      const s2Metadata = await this.fetchFromSemanticScholar(s2Identifier).catch(() => null);
+      // Try Semantic Scholar using preferred identifier (DOI:... or ArXiv:...)
+      let s2Metadata = null;
+      try {
+        s2Metadata = await this.fetchFromSemanticScholar(s2Identifier);
+      } catch (err) {
+        this.logger.warn(`Semantic Scholar lookup failed for ${s2Identifier}: ${err.message}`);
+        // Fallback: if identifier was DOI:..., try without prefix (some APIs accept plain DOI)
+        if (doi && s2Identifier.startsWith('DOI:')) {
+          try {
+            s2Metadata = await this.fetchFromSemanticScholar(doi);
+            this.logger.log(`Semantic Scholar fallback succeeded for plain DOI ${doi}`);
+          } catch (_) {
+            // ignore, keep s2Metadata null
+          }
+        }
+      }
       if (s2Metadata) {
         metadataSources.push(s2Metadata);
       }
@@ -211,16 +235,34 @@ export class PaperMetadataService {
 
   private async fetchFromSemanticScholar(identifier: string): Promise<Partial<PaperMetadata>> {
     this.logger.log(`Fetching from Semantic Scholar: ${identifier}`);
-    const fields = 'title,authors,abstract,year,venue,externalIds,url,fieldsOfStudy,paperId,references.title,references.authors,references.year,references.externalIds,references.paperId,references.isInfluential';
-    const response = await axios.get(`${this.semanticScholarBaseUrl}/${identifier}`, {
-      params: { fields },
-      timeout: 15000,  // Increased timeout for reference fetching
-      headers: { 
-        'User-Agent': 'LiteratureReviewApp/1.0',
-        ...this.getSemanticScholarHeaders(),
-      },
-    });
-    return this.mapSemanticScholarToMetadata(response.data);
+    const fields = 'title,authors,abstract,year,venue,externalIds,url,fieldsOfStudy,paperId,references.title,references.authors,references.year,references.externalIds,references.paperId';
+    // const response = await axios.get(`${this.semanticScholarBaseUrl}/${identifier}`, {
+    //   params: { fields },
+    //   timeout: 15000,  // Increased timeout for reference fetching
+    //   headers: {
+    //     'User-Agent': 'LiteratureReviewApp/1.0',
+    //     ...this.getSemanticScholarHeaders(),
+    //   },
+    // });
+
+    const encodedId = encodeURIComponent(identifier);
+    try {
+      const response = await axios.get(`${this.semanticScholarBaseUrl}/${encodedId}`, {
+        params: { fields },
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'LiteratureReviewApp/1.0',
+          ...this.getSemanticScholarHeaders(),
+        },
+      });
+      console.log('✅ Semantic Scholar response data:', response.data);
+      return this.mapSemanticScholarToMetadata(response.data);
+    } catch (err: any) {
+      this.logger.warn(`Semantic Scholar request failed for ${identifier}: ${err.response?.status} ${err.response?.statusText || ''}`);
+      this.logger.debug(`Semantic Scholar response body: ${JSON.stringify(err.response?.data)}`);
+      throw err;
+    }
+  //  return this.mapSemanticScholarToMetadata(response.data);
   }
 
   private async fetchFromArXiv(arxivId: string): Promise<Partial<PaperMetadata>> {
@@ -408,7 +450,7 @@ export class PaperMetadataService {
           timeout: 15000,
           headers: { 'User-Agent': 'LiteratureReviewApp/1.0 (mailto:support@example.com)' },
         });
-        refs = this.processReferences(response.data.references || [], false);
+        refs = this.processReferences(response.data.references || []);
         if (refs.length > 0) {
           return refs;
         }
@@ -549,9 +591,9 @@ export class PaperMetadataService {
 
     // Filter and prioritize references
     let references = data.references || [];
-    
+
     this.logger.log(`Semantic Scholar returned ${references.length} references`);
-    
+
     // Log first few references with year data for debugging
     if (references.length > 0) {
       this.logger.log(`Sample RAW reference data from S2 API (first 3):`);
@@ -559,23 +601,18 @@ export class PaperMetadataService {
         this.logger.log(`  Raw Ref ${idx + 1}:`);
         this.logger.log(`    title: "${ref.title?.substring(0, 80)}..."`);
         this.logger.log(`    year field: ${ref.year}`);
-        this.logger.log(`    isInfluential: ${ref.isInfluential}`);
       });
     }
-    
-    // Sort by influential first, then by year (newest first)
-    references = this.processReferences(references, true)
+
+    // Sort by year (newest first)
+    references = this.processReferences(references)
       .sort((a: any, b: any) => {
-        // Influential papers first
-        if (a.isInfluential && !b.isInfluential) return -1;
-        if (!a.isInfluential && b.isInfluential) return 1;
-        // Then by year (newest first)
         return (b.year || 0) - (a.year || 0);
       })
-      .slice(0, 50);  // Increased from 20 to 50 references
+      .slice(0, 50);  // Limit to 50 references
 
     this.logger.log(`Filtered and mapped ${references.length} references for paper`);
-    
+
     // Log year distribution
     const withYear = references.filter((r: any) => r.year).length;
     const withoutYear = references.length - withYear;
@@ -652,7 +689,7 @@ export class PaperMetadataService {
           limit: 10,
         },
         timeout: 15000,
-        headers: { 
+        headers: {
           'User-Agent': 'LiteratureReviewApp/1.0 (mailto:support@example.com)',
           ...this.getSemanticScholarHeaders(),
         },
@@ -714,7 +751,7 @@ export class PaperMetadataService {
         await new Promise(resolve => setTimeout(resolve, waitTime));
         return this.searchPaperByMetadata(title, authors, year, retries - 1);
       }
-      
+
       this.logger.error(`Search failed: ${error.message}`);
       return null;
     }
@@ -727,17 +764,17 @@ export class PaperMetadataService {
     this.logger.log(`Fetching references for paperId: ${paperId}`);
 
     try {
-      const fields = 'references.title,references.authors,references.year,references.externalIds,references.isInfluential';
+      const fields = 'references.title,references.authors,references.year,references.externalIds';
       const response = await axios.get(`${this.semanticScholarBaseUrl}/${paperId}`, {
         params: { fields },
         timeout: 15000,
-        headers: { 
+        headers: {
           'User-Agent': 'LiteratureReviewApp/1.0 (mailto:support@example.com)',
           ...this.getSemanticScholarHeaders(),
         },
       });
 
-      const refs = this.processReferences(response.data.references || [], true);
+      const refs = this.processReferences(response.data.references || []);
 
       this.logger.log(`✅ Found ${refs.length} references`);
       return refs;
@@ -761,7 +798,7 @@ export class PaperMetadataService {
       this.logger.log(`🤖 Using AI to find DOI for: "${title.substring(0, 50)}..."`);
 
       const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-      
+
       const prompt = `You are a research paper metadata expert. Given the following paper information, find and return ONLY the DOI (Digital Object Identifier) in the exact format "10.xxxx/xxxxx".
 
 Paper Information:
@@ -779,7 +816,7 @@ DOI:`;
 
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim();
-      
+
       this.logger.log(`AI response: ${response}`);
 
       // Validate DOI format
