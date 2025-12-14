@@ -33,18 +33,20 @@ interface PdfViewerProps {
   paperId: number;
 }
 
+
 export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
-  console.log('📄 PdfViewer rendered with', pdfFiles.length, 'files');
-  
   const queryClient = useQueryClient();
+  const [localPdfFiles, setLocalPdfFiles] = useState<PdfFile[]>(pdfFiles);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState<string>('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => pdfService.delete(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
+      setLocalPdfFiles((prev) => prev.filter((pdf) => pdf.id !== id));
       queryClient.invalidateQueries({ queryKey: ['pdfs', paperId] });
       toast.success('PDF deleted successfully!');
       setDeletingId(null);
@@ -102,10 +104,19 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
   };
 
   const handleDelete = (id: number) => {
-    if (window.confirm('Are you sure you want to delete this PDF? This action cannot be undone.')) {
-      setDeletingId(id);
-      deleteMutation.mutate(id);
+    setConfirmDeleteId(id);
+  };
+
+  const handleConfirmDelete = () => {
+    if (confirmDeleteId !== null) {
+      setDeletingId(confirmDeleteId);
+      deleteMutation.mutate(confirmDeleteId);
+      setConfirmDeleteId(null);
     }
+  };
+
+  const handleCancelDelete = () => {
+    setConfirmDeleteId(null);
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -124,7 +135,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
     });
   };
 
-  if (pdfFiles.length === 0) {
+  if (localPdfFiles.length === 0) {
     return (
       <Box
         sx={{
@@ -147,7 +158,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
   return (
     <Box>
       <Box display="flex" flexDirection="column" gap={2}>
-        {pdfFiles.map((pdf) => (
+        {localPdfFiles.map((pdf) => (
           <Card key={pdf.id} variant="outlined">
             <CardContent>
               <Box display="flex" alignItems="center" gap={2}>
@@ -279,6 +290,22 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
             }}
           >
             Download
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={confirmDeleteId !== null} onClose={handleCancelDelete}>
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <Typography>Are you sure you want to delete this PDF? This action cannot be undone.</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelDelete} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={handleConfirmDelete} color="error" variant="contained" autoFocus>
+            Delete
           </Button>
         </DialogActions>
       </Dialog>

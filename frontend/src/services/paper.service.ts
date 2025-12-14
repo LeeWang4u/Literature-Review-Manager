@@ -32,7 +32,7 @@ export const paperService = {
   // },
 
   create: async (data: CreatePaperData): Promise<Paper> => {
-    const response = await axiosInstance.post<{ success: boolean; message: string; data: Paper }>('/papers', data);
+    const response = await axiosInstance.post<{ success: boolean; message: string; status: number; data: Paper }>('/papers', data);
     return response.data.data;
   },
 

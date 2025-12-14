@@ -355,6 +355,10 @@ export class PaperMetadataService {
       }
     }
 
+    if (arxivId) {
+      merged.url = `https://arxiv.org/abs/${arxivId}`;
+    }
+
     // For abstract, take the longest one
     let longestAbstract = '';
     sources.forEach(src => {
@@ -650,6 +654,7 @@ export class PaperMetadataService {
   }
 
   public extractArxivId(input: string): string | null {
+    console.log(`Extracting ArXiv ID from input for pdf: ${input}`);
     const urlMatch = input.match(/arxiv\.org\/(?:abs|pdf)\/([^\/v]+)/i);
     if (urlMatch) {
       return urlMatch[1].replace('.pdf', '');

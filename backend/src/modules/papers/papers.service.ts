@@ -42,7 +42,7 @@ export class PapersService {
 
 
 
-  async create(createPaperDto: CreatePaperDto, userId: number): Promise<{ success: boolean; message: string; data: Paper }> {
+  async create(createPaperDto: CreatePaperDto, userId: number): Promise<{ success: boolean; message: string; status: number; data: Paper }> {
     const { tagIds, references, ...paperData } = createPaperDto;
 
     // Debug: Log references with year data
@@ -70,6 +70,7 @@ export class PapersService {
           {
             success: false,
             message: 'Bài báo này đã tồn tại trong thư viện của bạn.',
+            status: HttpStatus.CONFLICT,
             data: { id: existingPaper.id },
           },
           HttpStatus.CONFLICT, // 409
@@ -120,6 +121,7 @@ export class PapersService {
     return {
       success: true,
       message: 'Paper created successfully. References are being processed in background.',
+      status: HttpStatus.CREATED,
       data: await this.findOne(savedPaper.id)
     };
   }
