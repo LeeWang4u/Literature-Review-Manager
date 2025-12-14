@@ -30,6 +30,10 @@ export class PdfFile {
   @Column({ name: 'original_filename', length: 255 })
   originalFilename: string;
 
+  @Column({ name: 'uploaded_by' })
+  @Index()
+  uploadedBy: number;
+
   @Column({ name: 'mime_type', length: 100, nullable: true })
   mimeType: string;
 

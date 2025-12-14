@@ -8,6 +8,7 @@ import { Paper } from '../papers/paper.entity';
 import { CreateCitationDto } from './dto/citation.dto';
 import { UpdateCitationDto } from './dto/update-citation.dto';
 import { AnalyzeReferencesDto, ReferenceAnalysisResult } from './dto/analyze-references.dto';
+import { CitationMetricsService } from './citation-metrics.service';
 
 @Injectable()
 export class CitationsService {
@@ -20,12 +21,13 @@ export class CitationsService {
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
     private configService: ConfigService,
+    private citationMetricsService: CitationMetricsService,
   ) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
       this.model = this.genAI.getGenerativeModel({ 
-        model: 'gemini-2.0-flash-lite',
+        model: 'gemini-2.5-flash',
       });
       console.log('✅ Gemini AI initialized in CitationsService');
     } else {
@@ -33,7 +35,7 @@ export class CitationsService {
     }
   }
 
-  async create(createCitationDto: CreateCitationDto): Promise<Citation> {
+  async create(createCitationDto: CreateCitationDto, userId: number): Promise<Citation> {
     const { citingPaperId, citedPaperId } = createCitationDto;
 
     // Prevent self-citation
@@ -64,8 +66,8 @@ export class CitationsService {
     }
 
     const citation = this.citationsRepository.create({
-      citingPaperId,
-      citedPaperId,
+      ...createCitationDto,
+      createdBy: userId,
     });
 
     return await this.citationsRepository.save(citation);
@@ -407,9 +409,20 @@ export class CitationsService {
     const citing = citation.citingPaper;
     const cited = citation.citedPaper;
 
+    // Check if we have enough content for meaningful analysis
+    const citingHasContent = citing.abstract || citing.fullText;
+    const citedHasContent = cited.abstract || cited.fullText;
+    
+    if (!citingHasContent || !citedHasContent) {
+      throw new BadRequestException(
+        `Cannot auto-rate: ${!citingHasContent ? 'Citing paper' : 'Cited paper'} lacks abstract/fullText. ` +
+        `Please add content or rate manually.`
+      );
+    }
+
     // Prepare content for AI analysis
-    const citingContent = this.truncateContent(citing.abstract || citing.fullText || 'No content available', 2000);
-    const citedContent = this.truncateContent(cited.abstract || cited.fullText || 'No content available', 2000);
+    const citingContent = this.truncateContent(citing.abstract || citing.fullText, 2000);
+    const citedContent = this.truncateContent(cited.abstract || cited.fullText, 2000);
 
     // Calculate recency score (papers from recent years are more relevant)
     const currentYear = new Date().getFullYear();
@@ -524,7 +537,14 @@ Where:
    * Batch AI rating for all citations of a paper
    */
   async autoRateAllReferences(paperId: number): Promise<{ rated: number; failed: number; citations: Citation[] }> {
-    const citations = await this.getReferences(paperId);
+    const citations = await this.getReferences(paperId)
+    
+    console.log(`\n🔍 AUTO-RATING ${citations.length} REFERENCES FOR PAPER ${paperId}`);
+    console.log(`   Using advanced algorithms: network centrality + temporal analysis + context quality\n`);
+    
+    // Get citation network for advanced metrics (use depth 2 for good coverage)
+    const network = await this.getCitationNetwork(paperId, 2);
+    const currentYear = new Date().getFullYear();
     
     let rated = 0;
     let failed = 0;
@@ -532,19 +552,53 @@ Where:
 
     for (const citation of citations) {
       try {
+        // First, use AI to get base relevance score
         const updated = await this.autoRateRelevance(citation.id);
+        
+        // Then, enhance with advanced metrics
+        const { totalScore, breakdown } = await this.citationMetricsService.calculateAdvancedScore(
+          updated,
+          network,
+          currentYear
+        );
+        
+        // Get centrality for additional context
+        const centrality = await this.citationMetricsService.calculateCentrality(
+          updated.citedPaperId,
+          network
+        );
+        
+        // Update with enhanced score (combine AI score with advanced metrics)
+        // 70% AI content relevance + 30% advanced metrics
+        const enhancedScore = (updated.relevanceScore * 0.7) + (totalScore * 0.3);
+        updated.relevanceScore = Math.min(enhancedScore, 1.0);
+        
+        // Mark as influential if highly cited in network
+        if (centrality.inDegree >= 3 || totalScore >= 0.8) {
+          updated.isInfluential = true;
+        }
+        
+        await this.citationsRepository.save(updated);
+        
+        console.log(`   ✓ Rated citation ${citation.id}: ${(enhancedScore * 100).toFixed(0)}% relevance`);
+        console.log(`     - AI Content: ${(updated.relevanceScore * 0.7 * 100).toFixed(0)}%`);
+        console.log(`     - Network Importance: ${(breakdown.networkImportance * 100).toFixed(0)}%`);
+        console.log(`     - Temporal Relevance: ${(breakdown.temporalRelevance * 100).toFixed(0)}%`);
+        console.log(`     - In-degree: ${centrality.inDegree} citations${updated.isInfluential ? ' (INFLUENTIAL)' : ''}`);
+        
         results.push(updated);
         rated++;
         
         // Add delay to avoid rate limiting (500ms between requests)
         await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
-        console.error(`Failed to rate citation ${citation.id}:`, error.message);
+        console.error(`   ✗ Failed to rate citation ${citation.id}:`, error.message);
         failed++;
         results.push(citation);
       }
     }
 
+    console.log(`\n✅ COMPLETED: ${rated} rated, ${failed} failed\n`);
     return { rated, failed, citations: results };
   }
 
@@ -574,7 +628,7 @@ Where:
     paperId: number, 
     options: AnalyzeReferencesDto = {}
   ): Promise<ReferenceAnalysisResult> {
-    const { limit = 10, minRelevance = 0.5 } = options;
+    const { limit = 10, minRelevance = 0.0 } = options; // Changed from 0.5 to 0.0
 
     // Verify paper exists
     const paper = await this.papersRepository.findOne({
@@ -609,33 +663,53 @@ Where:
       };
     }
 
-    // Calculate combined score for each reference
+    // Get full citation network for advanced metrics
+    const network = await this.getCitationNetwork(paperId, 2);
+    const currentYear = new Date().getFullYear();
+
+    // Calculate combined score for each reference using advanced algorithm
     const scoredReferences = await Promise.all(
       citations.map(async (citation) => {
         const citedPaper = citation.citedPaper;
         
-        // Calculate combined score (0-1 scale)
-        let score = 0;
+        // Use advanced multi-dimensional scoring
+        const { totalScore: score, breakdown } = await this.citationMetricsService.calculateAdvancedScore(
+          citation,
+          network,
+          currentYear
+        );
         
-        // 1. Relevance score (40% weight)
-        if (citation.relevanceScore) {
-          score += citation.relevanceScore * 0.4;
+        // Calculate centrality measures
+        const centrality = await this.citationMetricsService.calculateCentrality(
+          citedPaper.id,
+          network
+        );
+        
+        // Calculate co-citation similarity (how similar to other references)
+        const coCitation = await this.citationMetricsService.calculateCoCitation(
+          paperId,
+          citedPaper.id,
+          network
+        );
+        
+        // 🆕 Predict future impact potential (composite score 0-100)
+        let impactPotential = null;
+        try {
+          impactPotential = await this.citationMetricsService.forecastImpactPotential(citedPaper.id);
+        } catch (error) {
+          // Skip if not enough data for prediction
         }
         
-        // 2. Influential status (30% weight)
-        if (citation.isInfluential) {
-          score += 0.3;
+        // 🆕 Get citation predictions (linear regression)
+        let predictions = null;
+        try {
+          predictions = await this.citationMetricsService.predictFutureCitations(citedPaper.id, 12);
+        } catch (error) {
+          // Skip if not enough data for prediction
         }
         
-        // 3. Citation count from network (30% weight)
-        // Count how many other papers in user's library cite this paper
-        const citationCount = await this.citationsRepository.count({
-          where: { citedPaperId: citedPaper.id },
-        });
-        
-        // Normalize citation count (assume max 10 citations = 1.0)
-        const citationScore = Math.min(citationCount / 10, 1.0);
-        score += citationScore * 0.3;
+        // Get citation count for display
+        const citationCount = centrality.inDegree;
 
         return {
           citation: {
@@ -656,6 +730,23 @@ Where:
           },
           score,
           citationCount,
+          centrality,
+          coCitationStrength: coCitation.strength,
+          scoreBreakdown: breakdown,
+          // 🆕 Impact potential metrics
+          impactPotential: impactPotential ? {
+            score: impactPotential.impactScore,
+            category: impactPotential.potential,
+            projectedRank: impactPotential.projectedRank,
+            timeToImpact: impactPotential.timeToImpact,
+            indicators: impactPotential.indicators,
+          } : null,
+          // 🆕 Future predictions
+          futurePrediction: predictions ? {
+            nextYear: predictions.predictions[11]?.predicted || 0,
+            confidenceInterval: predictions.predictions[11]?.confidenceInterval || { lower: 0, upper: 0 },
+            growthRate: predictions.overallTrend === 'growing' ? '+' : predictions.overallTrend === 'declining' ? '-' : '=',
+          } : null,
         };
       })
     );
@@ -666,10 +757,26 @@ Where:
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
 
-    // Calculate recommendations
-    const highPriority = scoredReferences.filter(ref => ref.score >= 0.8).length;
+    // Calculate recommendations with enhanced criteria
+    const highPriority = scoredReferences.filter(ref => 
+      ref.score >= 0.8 || 
+      (ref.centrality.inDegree >= 5 && ref.score >= 0.6) ||
+      ref.coCitationStrength >= 0.7 ||
+      (ref.impactPotential?.score >= 80) // 🆕 Breakthrough potential
+    ).length;
+    
     const shouldDownload = scoredReferences.filter(ref => 
-      (ref.score >= 0.6 || ref.citation.isInfluential) && !ref.paper.hasPdf
+      (ref.score >= 0.6 || 
+       ref.citation.isInfluential || 
+       ref.centrality.inDegree >= 3 ||
+       (ref.impactPotential?.score >= 60)) && // 🆕 High potential
+      !ref.paper.hasPdf
+    ).length;
+    
+    // 🆕 Identify trending references
+    const trendingReferences = scoredReferences.filter(ref => 
+      ref.futurePrediction?.growthRate === '+' &&
+      ref.impactPotential?.category === 'high' || ref.impactPotential?.category === 'breakthrough'
     ).length;
 
     return {
@@ -682,6 +789,17 @@ Where:
         highPriority,
         shouldDownload,
       },
+      // 🆕 Overall insights
+      insights: {
+        hasBreakthroughPapers: scoredReferences.some(ref => ref.impactPotential?.score >= 80),
+        avgImpactScore: Math.round(
+          scoredReferences
+            .filter(ref => ref.impactPotential)
+            .reduce((sum, ref) => sum + (ref.impactPotential?.score || 0), 0) / 
+          scoredReferences.filter(ref => ref.impactPotential).length
+        ) || 0,
+        growingReferences: scoredReferences.filter(ref => ref.futurePrediction?.growthRate === '+').length,
+      }
     };
   }
 }

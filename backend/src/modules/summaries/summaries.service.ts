@@ -1,31 +1,23 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AiSummary } from './ai-summary.entity';
 import { Paper } from '../papers/paper.entity';
+import { AIProviderService } from './ai-provider.service';
 
 @Injectable()
 export class SummariesService {
-  private genAI: GoogleGenerativeAI;
-
   constructor(
     @InjectRepository(AiSummary)
     private summariesRepository: Repository<AiSummary>,
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
+    private aiProviderService: AIProviderService,
   ) {
-    // Initialize Gemini API
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn('⚠️ GEMINI_API_KEY not found in environment variables');
-    } else {
-      this.genAI = new GoogleGenerativeAI(apiKey);
-      console.log('✅ Gemini API initialized successfully');
-    }
+    console.log('✅ SummariesService initialized with AI fallback support');
   }
 
-  async generateSummary(paperId: number, userId: number, forceRegenerate: boolean = false, provider: string = 'gemini'): Promise<AiSummary> {
+  async generateSummary(paperId: number, userId: number, forceRegenerate: boolean = false, provider: string = 'auto', maxKeyFindings: number = 5): Promise<AiSummary> {
     console.log(`🤖 Generating summary for paper ${paperId} with provider: ${provider}`);
     
     // Verify paper exists and belongs to user
@@ -57,20 +49,28 @@ export class SummariesService {
       return existingSummary;
     }
 
-    // Generate summary using Gemini AI
+    // Generate summary using AI with fallback
     let summaryText: string;
     let keyFindings: string[];
+    let usedProvider: string;
+    let usedModel: string;
 
-    if (provider === 'gemini') {
-      console.log('🌟 Calling Gemini API to generate summary...');
-      const result = await this.generateWithGemini(paper);
+    try {
+      console.log('🌟 Calling AI providers with automatic fallback...');
+      const result = await this.generateWithAI(paper, maxKeyFindings);
       summaryText = result.summary;
       keyFindings = result.keyFindings;
-    } else {
-      console.log('⚠️ Using placeholder summary (no AI provider specified)');
-      // Fallback to placeholder
+      usedProvider = result.provider;
+      usedModel = result.model;
+      
+      console.log(`✅ Summary generated successfully with ${usedProvider} (${usedModel})`);
+    } catch (error) {
+      console.error('❌ All AI providers failed:', error.message);
+      console.log('⚠️ Falling back to placeholder summary');
       summaryText = this.generatePlaceholderSummary(paper);
       keyFindings = this.extractPlaceholderKeyFindings(paper);
+      usedProvider = 'fallback';
+      usedModel = 'none';
     }
 
     if (existingSummary) {
@@ -135,15 +135,18 @@ export class SummariesService {
     await this.summariesRepository.remove(summary);
   }
 
-  // Generate summary using Google Gemini AI
-  private async generateWithGemini(paper: Paper): Promise<{ summary: string; keyFindings: string[] }> {
-    if (!this.genAI) {
-      throw new BadRequestException('Gemini API is not configured. Please set GEMINI_API_KEY in environment variables.');
+  // Generate summary using AI with automatic fallback
+  private async generateWithAI(paper: Paper, maxKeyFindings: number = 5): Promise<{ 
+    summary: string; 
+    keyFindings: string[];
+    provider: string;
+    model: string;
+  }> {
+    if (!this.aiProviderService.hasAvailableProvider()) {
+      throw new BadRequestException('No AI providers are configured. Please set at least one API key.');
     }
 
-    console.log('🌟 Calling Gemini API...');
-
-    const model = this.genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+    console.log('🌟 Generating summary with AI providers...');
 
     // ✅ Determine content source: prioritize fullText from PDF
     const hasFullText = paper.fullText && paper.fullText.length > 0;
@@ -187,90 +190,175 @@ Please provide:
    - Significance and implications
    ${hasFullText ? '- Limitations and future work' : ''}
 
-2. List ALL key findings from the paper as separate bullet points. ${hasFullText ? 'Extract findings from ALL sections: Introduction, Methodology, Results, Discussion, and Conclusion.' : 'Extract every significant finding from the abstract.'} Include as many findings as you can identify - do not limit to just 3-5 items.
+2. List the TOP ${maxKeyFindings} most important key findings from the paper as separate bullet points. ${hasFullText ? 'Extract findings from ALL sections: Introduction, Methodology, Results, Discussion, and Conclusion.' : 'Extract the most significant findings from the abstract.'} Focus on the most critical insights and limit to EXACTLY ${maxKeyFindings} findings.
 
 Format your response as JSON:
 {
   "summary": "Your detailed summary here...",
-  "keyFindings": ["Finding 1", "Finding 2", "Finding 3", "Finding 4", "Finding 5", "...and more if available"]
+  "keyFindings": ["Finding 1", "Finding 2", "Finding 3", "Finding 4", "Finding 5"${maxKeyFindings > 5 ? ', "...up to ' + maxKeyFindings + ' findings"' : ''}]
 }`;
 
     try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const result = await this.aiProviderService.generateWithFallback(prompt, {
+        maxTokens: 16384, // Increased to 16K to prevent response truncation
+        temperature: 0.7,
+      });
       
-      console.log('📄 Raw Gemini response:', text);
+      const text = result.text;
+      console.log('📄 Raw AI response length:', text.length, 'chars');
+      console.log('📄 Raw AI response (first 500 chars):', text.substring(0, 500));
+      console.log('📄 Raw AI response (last 200 chars):', text.substring(Math.max(0, text.length - 200)));
 
       // Try to parse JSON response
       let parsed;
       try {
-        // Remove markdown code blocks if present (both ```json and just ```)
+        // Remove markdown code blocks if present
         let cleanText = text.trim();
         
-        // Remove code block markers
+        // More robust markdown removal
         if (cleanText.startsWith('```')) {
-          cleanText = cleanText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+          // Remove opening ```json or ```
+          cleanText = cleanText.replace(/^```(?:json)?\s*\n?/, '');
+          // Remove closing ```
+          cleanText = cleanText.replace(/\n?```\s*$/, '');
+          cleanText = cleanText.trim();
         }
         
         console.log('📝 Attempting to parse JSON...');
+        console.log('🔍 Clean text (first 300 chars):', cleanText.substring(0, 300));
         parsed = JSON.parse(cleanText);
         console.log('✅ JSON parsed successfully');
+        console.log('📊 Parsed object keys:', Object.keys(parsed));
+        console.log('📋 KeyFindings count:', Array.isArray(parsed.keyFindings) ? parsed.keyFindings.length : 'N/A');
       } catch (e) {
-        console.warn('⚠️ Failed to parse JSON, using text extraction');
-        console.warn('Parse error:', e.message);
+        console.warn('⚠️ Failed to parse JSON directly, trying extraction. Error:', e.message);
         
-        // Fallback: extract summary and findings from text using better regex
-        try {
-          // Try to extract JSON object from text
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            parsed = JSON.parse(jsonMatch[0]);
-          } else {
-            // Last resort: use the raw text
+        // Fallback 1: Try to extract JSON object from text more carefully
+        const jsonMatch = text.match(/\{\s*"summary"[\s\S]*"keyFindings"[\s\S]*\]/);
+        if (jsonMatch) {
+          try {
+            // Find the complete JSON object
+            let jsonStr = jsonMatch[0];
+            // Count braces to find the closing }
+            let braceCount = 0;
+            let endIdx = 0;
+            for (let i = 0; i < jsonStr.length; i++) {
+              if (jsonStr[i] === '{') braceCount++;
+              if (jsonStr[i] === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                  endIdx = i + 1;
+                  break;
+                }
+              }
+            }
+            
+            if (endIdx > 0) {
+              jsonStr = jsonStr.substring(0, endIdx);
+              console.log('🔍 Extracted JSON length:', jsonStr.length);
+              parsed = JSON.parse(jsonStr);
+              console.log('✅ JSON extracted and parsed successfully');
+            } else {
+              throw new Error('Could not find complete JSON object');
+            }
+          } catch (e2) {
+            console.error('❌ JSON extraction failed:', e2.message);
             parsed = {
               summary: text,
-              keyFindings: ['Analysis completed by Gemini AI']
+              keyFindings: ['⚠️ Key findings could not be extracted from AI response. Please regenerate the summary.']
             };
           }
-        } catch (e2) {
+        } else {
+          console.warn('⚠️ No JSON pattern found in response');
           parsed = {
             summary: text,
-            keyFindings: ['Analysis completed by Gemini AI']
+            keyFindings: ['⚠️ Key findings could not be extracted from AI response. Please regenerate the summary.']
           };
         }
       }
 
-      console.log('✅ Gemini summary generated successfully');
+      console.log(`✅ Summary generated successfully with ${result.provider}`);
+      
+      // Check if keyFindings is missing
+      if (!parsed.keyFindings || !Array.isArray(parsed.keyFindings)) {
+        console.warn('⚠️ KeyFindings missing or invalid in AI response! Parsed object:', JSON.stringify(parsed).substring(0, 300));
+      }
       
       return {
         summary: parsed.summary || text,
-        keyFindings: Array.isArray(parsed.keyFindings) ? parsed.keyFindings : ['No specific findings extracted']
+        keyFindings: Array.isArray(parsed.keyFindings) && parsed.keyFindings.length > 0 
+          ? parsed.keyFindings 
+          : ['⚠️ Key findings could not be extracted. Please refer to the full summary above.'],
+        provider: result.provider,
+        model: result.model,
       };
     } catch (error) {
-      console.error('❌ Gemini API error:', error);
-      throw new BadRequestException(`Failed to generate summary with Gemini: ${error.message}`);
+      console.error('❌ AI generation error:', error);
+      throw new BadRequestException(`Failed to generate summary: ${error.message}`);
     }
   }
 
-  // Placeholder methods - Replace with actual AI integration
+  // Placeholder methods - Used when all AI models are unavailable
   private generatePlaceholderSummary(paper: Paper): string {
-    const keywords = paper.keywords?.split(',').slice(0, 3).join(', ') || 'various topics';
-    return `This is an AI-generated summary of "${paper.title}". 
+    const parts: string[] = [];
     
-The paper, published in ${paper.publicationYear}, presents research on ${keywords}.
-
-Abstract: ${paper.abstract}
-
-This summary is a placeholder. Integrate with OpenAI API for actual AI-generated summaries.`;
+    // Title and basic info
+    parts.push(`**${paper.title}**\n`);
+    
+    if (paper.authors || paper.publicationYear || paper.journal) {
+      const metadata = [
+        paper.authors ? `Authors: ${paper.authors}` : null,
+        paper.publicationYear ? `Year: ${paper.publicationYear}` : null,
+        paper.journal ? `Published in: ${paper.journal}` : null,
+      ].filter(Boolean).join(' | ');
+      parts.push(metadata + '\n');
+    }
+    
+    // Abstract (most important content)
+    if (paper.abstract) {
+      parts.push(`\n**Abstract:**\n${paper.abstract}\n`);
+    } else if (paper.fullText) {
+      const preview = paper.fullText.substring(0, 500).trim();
+      parts.push(`\n**Content Preview:**\n${preview}...\n`);
+    }
+    
+    // Keywords
+    if (paper.keywords) {
+      parts.push(`\n**Keywords:** ${paper.keywords}`);
+    }
+    
+    // Notice
+    parts.push(`\n\n---\n*⚠️ AI summary generation is temporarily unavailable (quota limits reached). This summary is compiled from metadata. AI service will resume when quota resets (~24 hours).*`);
+    
+    return parts.join('\n');
   }
 
   private extractPlaceholderKeyFindings(paper: Paper): string[] {
-    return [
-      'Key finding 1: (Placeholder - integrate with OpenAI API)',
-      'Key finding 2: (Placeholder - integrate with OpenAI API)',
-      'Key finding 3: (Placeholder - integrate with OpenAI API)',
-    ];
+    const findings: string[] = [];
+    
+    // Extract from keywords if available
+    if (paper.keywords) {
+      const keywords = paper.keywords.split(/[,;]/).map(k => k.trim()).slice(0, 5);
+      keywords.forEach(k => findings.push(`Research topic: ${k}`));
+    }
+    
+    // Add paper type/methodology if identifiable from title
+    const titleLower = paper.title.toLowerCase();
+    if (titleLower.includes('survey') || titleLower.includes('review')) {
+      findings.push('Paper type: Literature review or survey paper');
+    } else if (titleLower.includes('case study')) {
+      findings.push('Paper type: Case study research');
+    } else if (titleLower.includes('empirical')) {
+      findings.push('Paper type: Empirical study');
+    }
+    
+    // If still empty, add generic finding
+    if (findings.length === 0) {
+      findings.push('⚠️ Detailed findings require AI analysis (currently unavailable)');
+      findings.push('Please refer to the abstract for key research contributions');
+    }
+    
+    return findings;
   }
 
   /**
@@ -290,15 +378,14 @@ This summary is a placeholder. Integrate with OpenAI API for actual AI-generated
       throw new NotFoundException('Paper not found');
     }
 
-    // Generate tags using Gemini AI
-    if (!this.genAI) {
-      console.warn('⚠️ Gemini API not configured, returning keyword-based tags');
+    // Generate tags using AI with fallback
+    if (!this.aiProviderService.hasAvailableProvider()) {
+      console.warn('⚠️ No AI providers configured, returning keyword-based tags');
       return this.generateKeywordBasedTags(paper);
     }
 
     try {
-      console.log('🌟 Calling Gemini API for tag suggestions...');
-      const model = this.genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+      console.log('🌟 Calling AI provider for tag suggestions...');
 
       const existingTags = paper.tags?.map(t => t.name).join(', ') || 'none';
 
@@ -328,11 +415,13 @@ Return ONLY a valid JSON object in this exact format (no markdown, no explanatio
   "confidence": 0.95
 }`;
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const result = await this.aiProviderService.generateWithFallback(prompt, {
+        maxTokens: 2048,
+        temperature: 0.7,
+      });
+      const text = result.text;
 
-      console.log('🤖 Gemini response for tags:', text.substring(0, 200));
+      console.log(`🤖 ${result.model} response for tags:`, text.substring(0, 200));
 
       // Parse response
       let parsed: { tags: string[]; confidence: number };
@@ -393,15 +482,14 @@ Return ONLY a valid JSON object in this exact format (no markdown, no explanatio
   async suggestTagsFromText(title: string, abstract: string, authors?: string, keywords?: string): Promise<{ suggested: string[]; confidence: number }> {
     console.log(`🏷️ Generating tag suggestions from text content`);
 
-    // Generate tags using Gemini AI
-    if (!this.genAI) {
-      console.warn('⚠️ Gemini API not configured, returning keyword-based tags');
+    // Generate tags using AI with fallback
+    if (!this.aiProviderService.hasAvailableProvider()) {
+      console.warn('⚠️ No AI providers configured, returning keyword-based tags');
       return this.generateKeywordBasedTagsFromText(title, abstract, keywords);
     }
 
     try {
-      console.log('🌟 Calling Gemini API for tag suggestions...');
-      const model = this.genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash' });
+      console.log('🌟 Calling AI provider for tag suggestions...');
 
       const prompt = `You are a research paper categorization expert. Analyze this academic paper and suggest relevant tags/keywords for organization.
 
@@ -425,11 +513,13 @@ Return ONLY a valid JSON object in this exact format (no markdown, no explanatio
   "confidence": 0.95
 }`;
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const result = await this.aiProviderService.generateWithFallback(prompt, {
+        maxTokens: 2048,
+        temperature: 0.7,
+      });
+      const text = result.text;
 
-      console.log('🤖 Gemini response for tags:', text.substring(0, 200));
+      console.log(`🤖 ${result.model} response for tags:`, text.substring(0, 200));
 
       // Parse response
       let parsed: { tags: string[]; confidence: number };

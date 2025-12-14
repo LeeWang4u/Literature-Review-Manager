@@ -11,7 +11,7 @@ export class AnalyzeReferencesDto {
   @IsNumber()
   @Min(0)
   @Max(1)
-  minRelevance?: number = 0.5;
+  minRelevance?: number = 0.0; // Changed from 0.5 to 0.0
 }
 
 export interface ReferenceAnalysisResult {
@@ -42,5 +42,10 @@ export interface ReferenceAnalysisResult {
   recommendations: {
     highPriority: number; // Count of papers with score > 0.8
     shouldDownload: number; // Count recommended for download
+  };
+  insights?: {
+    hasBreakthroughPapers: boolean;
+    avgImpactScore: number;
+    growingReferences: number;
   };
 }

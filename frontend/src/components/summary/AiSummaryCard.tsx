@@ -17,6 +17,11 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Slider,
 } from '@mui/material';
 import {
   AutoAwesome,
@@ -26,6 +31,7 @@ import {
   ExpandLess,
   CheckCircle,
   Lightbulb,
+  Settings,
 } from '@mui/icons-material';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { summaryService } from '@/services/summary.service';
@@ -41,6 +47,8 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
   const [expandedFindings, setExpandedFindings] = useState(true);
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [copiedFindings, setCopiedFindings] = useState(false);
+  const [openSettings, setOpenSettings] = useState(false);
+  const [maxKeyFindings, setMaxKeyFindings] = useState(5);
 
   // Fetch existing summary
   const {
@@ -65,8 +73,8 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
 
   // Generate/Regenerate summary mutation
   const generateMutation = useMutation({
-    mutationFn: (forceRegenerate: boolean) =>
-      summaryService.generate(paperId, { forceRegenerate }),
+    mutationFn: ({ forceRegenerate, maxKeyFindings }: { forceRegenerate: boolean; maxKeyFindings?: number }) =>
+      summaryService.generate(paperId, { forceRegenerate, maxKeyFindings }),
     onSuccess: (newSummary) => {
       queryClient.setQueryData(['summary', paperId], newSummary);
       toast.success(
@@ -81,17 +89,17 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
   });
 
   const handleGenerate = () => {
-    generateMutation.mutate(false);
+    setOpenSettings(false);
+    generateMutation.mutate({ forceRegenerate: false, maxKeyFindings });
   };
 
   const handleRegenerate = () => {
-    if (
-      window.confirm(
-        'Are you sure you want to regenerate the summary? This will replace the existing summary.'
-      )
-    ) {
-      generateMutation.mutate(true);
-    }
+    setOpenSettings(true);
+  };
+
+  const handleConfirmRegenerate = () => {
+    setOpenSettings(false);
+    generateMutation.mutate({ forceRegenerate: true, maxKeyFindings });
   };
 
   const handleCopySummary = async () => {
@@ -133,6 +141,60 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
     });
   };
 
+  // Settings Dialog for configuring key findings count
+  const SettingsDialog = (
+    <Dialog open={openSettings} onClose={() => setOpenSettings(false)} maxWidth="sm" fullWidth>
+      <DialogTitle>
+        <Box display="flex" alignItems="center" gap={1}>
+          <Settings />
+          <span>{summary ? 'Regenerate Summary' : 'Generate Summary'} Settings</span>
+        </Box>
+      </DialogTitle>
+      <DialogContent>
+        <Box py={2}>
+          <Typography gutterBottom fontWeight="medium">
+            Number of Key Findings: {maxKeyFindings}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" gutterBottom mb={3}>
+            Adjust how many key findings the AI should extract (3-100)
+          </Typography>
+          <Slider
+            value={maxKeyFindings}
+            onChange={(_, value) => setMaxKeyFindings(value as number)}
+            min={3}
+            max={100}
+            marks={[
+              { value: 3, label: '3' },
+              { value: 5, label: '5' },
+              { value: 10, label: '10' },
+              { value: 20, label: '20' },
+              { value: 50, label: '50' },
+              { value: 100, label: '100' },
+            ]}
+            valueLabelDisplay="auto"
+            sx={{ mt: 1 }}
+          />
+          <Box mt={2} p={2} bgcolor="info.light" borderRadius={1}>
+            <Typography variant="caption" color="info.dark">
+              💡 <strong>Tip:</strong> Default is 5 findings. Use 3-5 for quick overview, 10-20 for
+              detailed analysis, or 50-100 for comprehensive extraction.
+            </Typography>
+          </Box>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setOpenSettings(false)}>Cancel</Button>
+        <Button
+          variant="contained"
+          onClick={summary ? handleConfirmRegenerate : handleGenerate}
+          startIcon={<AutoAwesome />}
+        >
+          {summary ? 'Regenerate' : 'Generate'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+
   // Loading state
   if (isLoading) {
     return (
@@ -160,13 +222,15 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
   // No summary yet - show generate button
   if (!summary) {
     return (
-      <Card
-        variant="outlined"
-        sx={{
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          color: 'white',
-        }}
-      >
+      <>
+        {SettingsDialog}
+        <Card
+          variant="outlined"
+          sx={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white',
+          }}
+        >
         <CardContent>
           <Box textAlign="center" py={3}>
             <AutoAwesome sx={{ fontSize: 64, mb: 2, opacity: 0.9 }} />
@@ -187,7 +251,7 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
                   <AutoAwesome />
                 )
               }
-              onClick={handleGenerate}
+              onClick={() => setOpenSettings(true)}
               disabled={generateMutation.isPending}
               sx={{
                 mt: 2,
@@ -203,12 +267,15 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
           </Box>
         </CardContent>
       </Card>
+      </>
     );
   }
 
   // Summary exists - show content
   return (
-    <Card variant="outlined">
+    <>
+      {SettingsDialog}
+      <Card variant="outlined">
       <CardContent>
         {/* Header */}
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -324,5 +391,6 @@ export const AiSummaryCard: React.FC<AiSummaryCardProps> = ({ paperId }) => {
         </Tooltip>
       </CardActions>
     </Card>
+    </>
   );
 };

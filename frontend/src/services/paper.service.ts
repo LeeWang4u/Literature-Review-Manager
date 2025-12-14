@@ -133,6 +133,10 @@ export const paperService = {
    fetchNestedReferencesEager: (paperId: number, targetDepth = 1, maxDepth = 2) =>
     axiosInstance.post(`/papers/${paperId}/fetch-nested/eager`, { targetDepth, maxDepth }).then(r => r.data),
 
+  // Fetch references for any paper
+  fetchReferences: async (paperId: number): Promise<{ success: boolean; message: string; data: any }> => {
+    const response = await axiosInstance.post(`/papers/${paperId}/fetch-references`);
+    return response.data;
+  },
+
 };
-
-

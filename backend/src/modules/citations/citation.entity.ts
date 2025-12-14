@@ -24,6 +24,10 @@ export class Citation {
   @Index()
   citedPaperId: number;
 
+  @Column({ name: 'created_by' })
+  @Index()
+  createdBy: number;
+
   @Column({ name: 'citation_context', type: 'text', nullable: true })
   citationContext: string;
 

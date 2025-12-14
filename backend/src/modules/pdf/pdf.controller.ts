@@ -70,7 +70,8 @@ export class PdfController {
       throw new BadRequestException('No file uploaded');
     }
 
-    return await this.pdfService.uploadPdf(paperId, file);
+    const userId = req.user.id;
+    return await this.pdfService.uploadPdf(paperId, file, userId);
   }
 
   @Get('paper/:paperId')

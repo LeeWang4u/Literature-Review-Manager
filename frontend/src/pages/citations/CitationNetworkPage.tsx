@@ -23,6 +23,11 @@ import {
   Stack,
   Rating,
   TextField,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Slider,
 } from '@mui/material';
 import {
   ZoomIn,
@@ -40,6 +45,7 @@ import {
   FilterList,
   OpenInNew,
   ArrowBack,
+  Add,
 } from '@mui/icons-material';
 import * as d3 from 'd3';
 import { citationService } from '@/services/citation.service';
@@ -82,6 +88,17 @@ const CitationNetworkPage: React.FC = () => {
   const analysisLimit = 15;
   const minRelevance = 0.3;
   const [filteredCount, setFilteredCount] = useState({ nodes: 0, edges: 0 });
+  
+  // Add manual node state
+  const [addNodeDialog, setAddNodeDialog] = useState(false);
+  const [newNodeData, setNewNodeData] = useState({
+    title: '',
+    authors: '',
+    year: new Date().getFullYear(),
+    doi: '',
+    relevanceScore: 0.5,
+    citationContext: '',
+  });
 
   // Fetch references of selected node
   const { data: selectedNodeReferences = [], isLoading: loadingNodeRefs } = useQuery({
@@ -113,7 +130,7 @@ const CitationNetworkPage: React.FC = () => {
       citationService.update(citationId, data),
     onSuccess: () => {
       toast.success('Updated citation relevance!');
-      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id] });
+      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id, depth] });
       queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
       setEditingNode(null);
       setDrawerOpen(false);
@@ -127,7 +144,7 @@ const CitationNetworkPage: React.FC = () => {
     mutationFn: (citationId: number) => citationService.autoRate(citationId),
     onSuccess: (data) => {
       toast.success(`AI rated: ${(data.relevanceScore! * 100).toFixed(0)}% relevance`);
-      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id] });
+      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id, depth] });
       queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
       setEditingNode(null);
     },
@@ -172,7 +189,7 @@ const CitationNetworkPage: React.FC = () => {
       }
 
       toast.success(message, { duration: 5000 });
-      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id] });
+      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id, depth] });
       queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
       setDrawerOpen(false);
     },
@@ -181,44 +198,65 @@ const CitationNetworkPage: React.FC = () => {
     },
   });
 
+  const addManualNodeMutation = useMutation({
+    mutationFn: async (data: typeof newNodeData) => {
+      // First, create the paper
+      const paperResponse = await paperService.create({
+        title: data.title,
+        authors: data.authors,
+        publicationYear: data.year, // Use publicationYear instead of year
+        doi: data.doi || undefined,
+        abstract: '', // Add empty abstract as it's optional
+        isReference: true, // Manual papers are references
+      });
+
+      // Then create citation linking it to current paper
+      const citation = await citationService.create({
+        citingPaperId: Number(id),
+        citedPaperId: paperResponse.id,
+        relevanceScore: data.relevanceScore,
+        citationContext: data.citationContext || undefined,
+      });
+
+      return { paper: paperResponse, citation };
+    },
+    onSuccess: (result) => {
+      toast.success(`Added "${result.paper.title}" with ${(result.citation.relevanceScore! * 100).toFixed(0)}% relevance`);
+      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id, depth] });
+      queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
+      setAddNodeDialog(false);
+      setNewNodeData({
+        title: '',
+        authors: '',
+        year: new Date().getFullYear(),
+        doi: '',
+        relevanceScore: 0.5,
+        citationContext: '',
+      });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Failed to add node');
+    },
+  });
+
+  const fetchReferencesMutation = useMutation({
+    mutationFn: (paperId: number) => paperService.fetchReferences(paperId),
+    onSuccess: (result) => {
+      toast.success(result.message, { duration: 5000 });
+      queryClient.invalidateQueries({ queryKey: ['citationNetwork', id, depth] });
+      queryClient.invalidateQueries({ queryKey: ['citations', 'references', id] });
+      queryClient.invalidateQueries({ queryKey: ['citations', 'references', selectedNode?.id] });
+      setDrawerOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Failed to fetch references');
+    },
+  });
+
   useEffect(() => {
     if (!network || !svgRef.current || !containerRef.current) return;
 
     d3.select(svgRef.current).selectAll('*').remove();
-
-    // Debug: Check network data structure
-    console.log('📊 Network Data Analysis:');
-    console.log(`   Total nodes: ${network.nodes.length}`);
-    console.log(`   Total edges: ${network.edges.length}`);
-    console.log('   Node types distribution:');
-    const nodeTypes = network.nodes.reduce((acc: any, node: any) => {
-      const type = node.type || 'unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {});
-    Object.entries(nodeTypes).forEach(([type, count]) => {
-      console.log(`     ${type}: ${count}`);
-    });
-
-    console.log('   Network depth distribution:');
-    const depthDist = network.nodes.reduce((acc: any, node: any) => {
-      const depth = node.networkDepth ?? node.citationDepth ?? 0;
-      acc[depth] = (acc[depth] || 0) + 1;
-      return acc;
-    }, {});
-    Object.entries(depthDist).forEach(([depth, count]) => {
-      console.log(`     Depth ${depth}: ${count}`);
-    });
-
-    console.log('\n   Sample nodes (first 5):');
-    network.nodes.slice(0, 5).forEach((node: any) => {
-      console.log(`     [${node.type || 'unknown'}] ${node.id}: "${node.title?.substring(0, 40)}..." year=${node.year} depth=${node.networkDepth ?? node.citationDepth ?? 0}`);
-    });
-
-    console.log('\n   Sample edges (first 5):');
-    network.edges.slice(0, 5).forEach((edge: any) => {
-      console.log(`     ${edge.source} → ${edge.target} (depth: ${edge.citationDepth})`);
-    });
 
     // Filter nodes based on showTopOnly - don't create copies to preserve D3 references
     let filteredNodes = network.nodes;
@@ -229,21 +267,16 @@ const CitationNetworkPage: React.FC = () => {
       const topRefIds = new Set(analysis.topReferences.map((ref: any) => ref.paper.id));
       const mainPaperId = Number(id);
 
-      console.log('Analysis top references:', analysis.topReferences.length);
-      console.log('Top ref IDs:', Array.from(topRefIds));
-      console.log('Main paper ID:', mainPaperId);
-      console.log('Total nodes before filter:', network.nodes.length);
-
       // Keep main paper + top references + their nested references (depth 2+)
       filteredNodes = network.nodes.filter((node: any) => {
         // Always keep main paper
         if (node.id === mainPaperId) return true;
 
-        // Keep top references (depth 1)
-        if (topRefIds.has(node.id)) return true;
+        // Keep ALL direct references (depth 1) - including manual additions
+        const depth = node.networkDepth ?? node.citationDepth ?? 0;
+        if (depth === 1) return true;
 
         // Keep nested references (depth 2+) that are connected to top references
-        const depth = node.networkDepth ?? node.citationDepth ?? 0;
         if (depth >= 2) {
           // Check if this node has edges connecting to any top reference
           const hasConnectionToTopRef = network.edges.some((edge: any) => {
@@ -264,19 +297,13 @@ const CitationNetworkPage: React.FC = () => {
         return false;
       });
 
-      console.log('Filtered nodes (with nested):', filteredNodes.length, filteredNodes.map((n: any) => `${n.id}(d${n.networkDepth ?? n.citationDepth ?? 0})`));
-
       const filteredNodeIds = new Set(filteredNodes.map((n: any) => n.id));
-
-      console.log('Total edges before filter:', network.edges.length);
       filteredEdges = network.edges.filter((edge: any) => {
         // Handle both number IDs and object references
         const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
         const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
         return filteredNodeIds.has(sourceId) && filteredNodeIds.has(targetId);
       });
-
-      console.log('Filtered edges:', filteredEdges.length);
     }
 
     // Update filtered counts
@@ -286,10 +313,16 @@ const CitationNetworkPage: React.FC = () => {
     const width = Math.max(containerWidth - 40, 1200);
     const height = 900;
 
-    // Initialize node positions to prevent undefined errors
+    // Initialize ALL node positions BEFORE creating links (prevents links from being invisible)
+    network.nodes.forEach((node: any) => {
+      if (node.x === undefined) node.x = width / 2 + (Math.random() - 0.5) * 100;
+      if (node.y === undefined) node.y = height / 2 + (Math.random() - 0.5) * 100;
+    });
+    
+    // Ensure filtered nodes also have positions
     filteredNodes.forEach((node: any) => {
-      if (node.x === undefined) node.x = width / 2;
-      if (node.y === undefined) node.y = height / 2;
+      if (node.x === undefined) node.x = width / 2 + (Math.random() - 0.5) * 100;
+      if (node.y === undefined) node.y = height / 2 + (Math.random() - 0.5) * 100;
     });
 
     const svg = d3
@@ -297,7 +330,9 @@ const CitationNetworkPage: React.FC = () => {
       .attr('width', width)
       .attr('height', height)
       .attr('viewBox', [0, 0, width, height] as any)
-      .style('background', 'linear-gradient(to bottom, #f8f9fa 0%, #e9ecef 100%)');
+      .style('background', 'radial-gradient(circle at 50% 50%, #f5f7fa 0%, #e8ecf1 50%, #dfe3e8 100%)')
+      .style('border-radius', '12px')
+      .style('box-shadow', '0 4px 20px rgba(0,0,0,0.08)');
 
     const g = svg.append('g');
 
@@ -338,22 +373,24 @@ const CitationNetworkPage: React.FC = () => {
         <stop offset="100%" style="stop-color:#9a0036;stop-opacity:0.9" />
       `);
 
-    // Improved arrow markers with better visibility
+    // Improved arrow markers with better visibility - pointing back to citing paper
     [
       { id: 0, color: '#999', size: 6 },
       { id: 1, color: '#4caf50', size: 8 },
-      { id: 2, color: '#ffd700', size: 9 }
+      { id: 2, color: '#ffd700', size: 9 },
+      { id: 3, color: '#e65100', size: 8 }, // Orange marker for deep2 links
+      { id: 4, color: '#1565c0', size: 8 }  // Blue marker for deep1 links
     ].forEach(({ id, color, size }) => {
       defs.append('marker')
         .attr('id', `arrowhead-${id}`)
-        .attr('viewBox', '-0 -5 10 10')
-        .attr('refX', 28)
+        .attr('viewBox', '-10 -5 10 10')
+        .attr('refX', -5) // Position at line start (edge of path)
         .attr('refY', 0)
         .attr('orient', 'auto')
         .attr('markerWidth', size)
         .attr('markerHeight', size)
         .append('svg:path')
-        .attr('d', 'M 0,-5 L 10 ,0 L 0,5')
+        .attr('d', 'M 0,-5 L -10,0 L 0,5') // Arrow pointing left (toward source)
         .attr('fill', color)
         .attr('stroke', color)
         .attr('stroke-width', 0.5);
@@ -385,69 +422,82 @@ const CitationNetworkPage: React.FC = () => {
     feMerge.append('feMergeNode');
     feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
 
+    // Create node map for edge resolution
+    const nodeMap = new Map(filteredNodes.map((node: any) => [node.id, node]));
+
+    // Resolve edges to use node objects instead of IDs and filter out invalid edges
+    const resolvedEdges = filteredEdges
+      .map((edge: any) => ({
+        ...edge,
+        source: nodeMap.get(typeof edge.source === 'object' ? edge.source.id : edge.source),
+        target: nodeMap.get(typeof edge.target === 'object' ? edge.target.id : edge.target),
+      }))
+      .filter((edge: any) => edge.source && edge.target); // Remove edges with undefined nodes
+
     // Enhanced links with curved paths - CREATE FIRST before layout logic
     const link = g
       .append('g')
       .attr('class', 'links')
       .selectAll('path')
-      .data(filteredEdges)
+      .data(resolvedEdges)
       .join('path')
       .attr('fill', 'none')
       .attr('stroke', (d: any) => {
-        if (d.isInfluential) return '#ffd700';
-        if (d.relevanceScore && d.relevanceScore >= 0.8) return '#4caf50';
-        if (d.relevanceScore && d.relevanceScore >= 0.6) return '#8bc34a';
-        if (d.relevanceScore && d.relevanceScore >= 0.4) return '#ffc107';
-        if (d.relevanceScore && d.relevanceScore > 0) return '#ff9800';
+        const depth = d.citationDepth;
+        const influential = d.isInfluential;
+        const score = d.relevanceScore;
+        
+        // Check citationDepth FIRST - highest priority
+        if (depth === 2) return '#e65100'; // Orange color for deep2
+        if (depth === 1) return '#1565c0'; // Blue color for deep1
+        
+        if (influential) return '#ffd700';
+        if (score && score >= 0.8) return '#4caf50';
+        if (score && score >= 0.6) return '#8bc34a';
+        if (score && score >= 0.4) return '#ffc107';
+        if (score && score > 0) return '#ff9800';
         return '#bdbdbd';
       })
       .attr('stroke-opacity', (d: any) => {
+        if (d.citationDepth === 2) return 0.8; // Higher opacity for deep2
+        if (d.citationDepth === 1) return 0.7; // Medium opacity for deep1
         if (d.relevanceScore) return 0.4 + d.relevanceScore * 0.5;
         return 0.3;
       })
       .attr('stroke-width', (d: any) => {
+        if (d.citationDepth === 2) return 3.5; // Thicker for deep2
+        if (d.citationDepth === 1) return 3; // Medium thickness for deep1
         if (d.isInfluential) return 4;
         if (d.relevanceScore && d.relevanceScore >= 0.7) return 3.5;
         if (d.relevanceScore && d.relevanceScore >= 0.4) return 3;
         return 2;
       })
-      .attr('marker-end', (d: any) => {
+      .attr('marker-start', (d: any) => { // Changed to marker-start for reversed arrow
+        if (d.citationDepth === 2) return 'url(#arrowhead-3)'; // Purple arrow for deep2
+        if (d.citationDepth === 1) return 'url(#arrowhead-4)'; // Blue arrow for deep1
         if (d.isInfluential) return 'url(#arrowhead-2)';
         if (d.relevanceScore && d.relevanceScore >= 0.7) return 'url(#arrowhead-1)';
         return 'url(#arrowhead-0)';
       })
       .attr('stroke-dasharray', (d: any) => {
+        if (d.citationDepth === 2) return '8,4'; // Dashed line for deep2
+        if (d.citationDepth === 1) return '4,2'; // Short dashed line for deep1
         if (!d.relevanceScore || d.relevanceScore < 0.3) return '5,5';
         return 'none';
       })
-      .attr('cursor', 'pointer')
-      .on('mouseenter', function(event, d: any) {
-        // Highlight this link only
-        d3.select(this)
-          .raise()
-          .transition()
-          .duration(200)
-          .attr('stroke-opacity', 0.95)
-          .attr('stroke-width', d.isInfluential ? 6 : 5);
-      })
-      .on('mouseleave', function(event, d: any) {
-        // Reset this link
-        d3.select(this)
-          .transition()
-          .duration(200)
-          .attr('stroke-opacity', d.relevanceScore ? 0.4 + d.relevanceScore * 0.5 : 0.3)
-          .attr('stroke-width', d.isInfluential ? 4 : d.relevanceScore && d.relevanceScore >= 0.7 ? 3.5 : d.relevanceScore && d.relevanceScore >= 0.4 ? 3 : 2);
-      });
+      .attr('pointer-events', 'none') // Disable pointer events on links
+      .style('cursor', 'default'); // Remove pointer cursor
     
     // Add tooltips to links
     link.append('title')
       .text((d: any) => {
-        const sourceTitle = d.source.title || 'Unknown';
-        const targetTitle = d.target.title || 'Unknown';
+        const sourceTitle = d.source?.title || 'Unknown';
+        const targetTitle = d.target?.title || 'Unknown';
         const parts = [
           `📄 From: ${sourceTitle.substring(0, 50)}${sourceTitle.length > 50 ? '...' : ''}`,
           `📄 To: ${targetTitle.substring(0, 50)}${targetTitle.length > 50 ? '...' : ''}`,
           '',
+          d.citationDepth === 2 ? '🔗 Deep Reference (Level 2)' : d.citationDepth === 1 ? '🔗 Indirect Reference (Level 1)' : '🔗 Direct Reference',
           d.relevanceScore ? `⭐ Relevance: ${(d.relevanceScore * 100).toFixed(0)}%` : '❓ Not rated',
           d.isInfluential ? '🌟 Highly Influential Citation' : '',
         ];
@@ -550,17 +600,18 @@ const CitationNetworkPage: React.FC = () => {
         .force(
           'link',
           d3
-            .forceLink(filteredEdges)
+            .forceLink(resolvedEdges)
             .id((d: any) => d.id)
             .distance(250)
             .strength(0.3)
         )
-        .force('charge', d3.forceManyBody().strength(-1200))
+        .force('charge', d3.forceManyBody().strength(-800))
         .force('center', d3.forceCenter(width / 2, height / 2))
-        .force('collision', d3.forceCollide().radius(60))
-        .force('x', d3.forceX(width / 2).strength(0.08))
-        .force('y', d3.forceY(height / 2).strength(0.08))
-        .alphaDecay(0.015);
+        .force('collision', d3.forceCollide().radius(50))
+        .force('x', d3.forceX(width / 2).strength(0.05))
+        .force('y', d3.forceY(height / 2).strength(0.05))
+        .alphaDecay(0.02)
+        .alphaTarget(0);
 
       // Update positions on tick
       simulation.on('tick', () => {
@@ -583,63 +634,40 @@ const CitationNetworkPage: React.FC = () => {
         setDrawerOpen(true);
       })
       .on('mouseenter', function(event, d: any) {
-        // Scale up the node
         d3.select(this)
-          .raise() // Bring to front
+          .raise()
           .transition()
           .duration(200)
-          .attr('transform', `translate(${d.x},${d.y}) scale(1.1)`);
+          .attr('transform', `translate(${d.x},${d.y}) scale(1.15)`);
         
-        // Highlight connected links
-        link
-          .transition()
-          .duration(200)
-          .attr('stroke-opacity', (l: any) => {
-            if (l.source.id === d.id || l.target.id === d.id) {
-              return 0.8;
-            }
-            return 0.1;
-          })
-          .attr('stroke-width', (l: any) => {
-            if (l.source.id === d.id || l.target.id === d.id) {
-              return l.isInfluential ? 5 : 4;
-            }
-            return l.isInfluential ? 4 : 2;
-          });
+        link.attr('stroke-opacity', (l: any) => {
+          if (l.source.id === d.id || l.target.id === d.id) return 0.9;
+          return 0.08;
+        });
         
-        // Dim other nodes
-        node
-          .transition()
-          .duration(200)
-          .attr('opacity', (n: any) => n.id === d.id ? 1 : 0.3);
+        node.attr('opacity', (n: any) => {
+          if (n.id === d.id) return 1;
+          const isConnected = filteredEdges.some((e: any) => 
+            (e.source.id === d.id && e.target.id === n.id) || 
+            (e.target.id === d.id && e.source.id === n.id)
+          );
+          return isConnected ? 0.7 : 0.2;
+        });
       })
       .on('mouseleave', function(event, d: any) {
-        // Reset node scale
         d3.select(this)
           .transition()
           .duration(200)
           .attr('transform', `translate(${d.x},${d.y}) scale(1)`);
         
-        // Reset links
-        link
-          .transition()
-          .duration(200)
-          .attr('stroke-opacity', (l: any) => {
-            if (l.relevanceScore) return 0.4 + l.relevanceScore * 0.5;
-            return 0.3;
-          })
-          .attr('stroke-width', (l: any) => {
-            if (l.isInfluential) return 4;
-            if (l.relevanceScore && l.relevanceScore >= 0.7) return 3.5;
-            if (l.relevanceScore && l.relevanceScore >= 0.4) return 3;
-            return 2;
-          });
+        link.attr('stroke-opacity', (l: any) => {
+          if (l.citationDepth === 2) return 0.8;
+          if (l.citationDepth === 1) return 0.7;
+          if (l.relevanceScore) return 0.4 + l.relevanceScore * 0.5;
+          return 0.3;
+        });
         
-        // Reset all nodes
-        node
-          .transition()
-          .duration(200)
-          .attr('opacity', 1);
+        node.attr('opacity', 1);
       })
       .call(
         d3.drag<any, any>()
@@ -652,55 +680,87 @@ const CitationNetworkPage: React.FC = () => {
     const nodeWidth = 180;
     const nodeHeight = 75; // Increased height to accommodate wrapped text
     
+    // Add gradient definitions for nodes
+    const nodeGradients = [
+      { id: 'grad-main', color1: '#e91e63', color2: '#c2185b' },
+      { id: 'grad-influential-0', color1: '#ffa726', color2: '#f57c00' },
+      { id: 'grad-influential-1', color1: '#ffb74d', color2: '#ff9800' },
+      { id: 'grad-influential-2', color1: '#ffcc80', color2: '#ffb74d' },
+      { id: 'grad-depth-0', color1: '#66bb6a', color2: '#43a047' },
+      { id: 'grad-depth-1', color1: '#42a5f5', color2: '#1e88e5' },
+      { id: 'grad-depth-2', color1: '#ff7043', color2: '#e65100' }, // Orange gradient for depth 2
+      { id: 'grad-default', color1: '#90a4ae', color2: '#607d8b' }
+    ];
+
+    nodeGradients.forEach(({ id, color1, color2 }) => {
+      const gradient = defs.append('linearGradient')
+        .attr('id', id)
+        .attr('x1', '0%')
+        .attr('y1', '0%')
+        .attr('x2', '100%')
+        .attr('y2', '100%');
+      
+      gradient.append('stop')
+        .attr('offset', '0%')
+        .attr('stop-color', color1);
+      
+      gradient.append('stop')
+        .attr('offset', '100%')
+        .attr('stop-color', color2);
+    });
+    
     node.append('rect')
       .attr('class', 'node-rect')
       .attr('x', -nodeWidth / 2)
       .attr('y', -nodeHeight / 2)
       .attr('width', nodeWidth)
       .attr('height', nodeHeight)
-      .attr('rx', 8)
-      .attr('ry', 8)
+      .attr('rx', 10)
+      .attr('ry', 10)
       .attr('fill', (d: any) => {
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
-        if (d.id === Number(id)) return '#e91e63';
+        if (d.id === Number(id)) return 'url(#grad-main)';
         if (d.isInfluential) {
-          if (depth === 0) return '#ffa726';
-          if (depth === 1) return '#ffb74d';
-          return '#ffcc80';
+          if (depth === 0) return 'url(#grad-influential-0)';
+          if (depth === 1) return 'url(#grad-influential-1)';
+          return 'url(#grad-influential-2)';
         }
-        if (depth === 0) return '#66bb6a';
-        if (depth === 1) return '#42a5f5';
-        if (depth === 2) return '#ab47bc';
-        return '#90a4ae';
+        if (depth === 0) return 'url(#grad-depth-0)';
+        if (depth === 1) return 'url(#grad-depth-1)';
+        if (depth === 2) return 'url(#grad-depth-2)';
+        return 'url(#grad-default)';
       })
       .attr('stroke', (d: any) => {
-        if (d.id === Number(id)) return '#c2185b';
-        if (d.isInfluential) return '#f57c00';
+        if (d.id === Number(id)) return '#ad1457';
+        if (d.isInfluential) return '#e65100';
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
-        if (depth === 0) return '#388e3c';
-        if (depth === 1) return '#1976d2';
-        if (depth === 2) return '#7b1fa2';
-        return '#546e7a';
+        if (depth === 0) return '#2e7d32';
+        if (depth === 1) return '#1565c0';
+        if (depth === 2) return '#d84315'; // Dark orange for depth 2 stroke
+        return '#455a64';
       })
       .attr('stroke-width', (d: any) => {
-        if (d.id === Number(id)) return 3;
-        if (d.isInfluential) return 2.5;
+        if (d.id === Number(id)) return 3.5;
+        if (d.isInfluential) return 3;
         return 2;
       })
       .attr('filter', 'url(#node-shadow)')
+      .style('transition', 'all 0.3s ease')
       .on('mouseenter', function (this: any) {
         d3.select(this)
           .transition()
-          .duration(200)
-          .attr('stroke-width', 4)
-          .attr('filter', 'url(#node-shadow) brightness(1.1)');
+          .duration(300)
+          .attr('stroke-width', 5)
+          .attr('rx', 12)
+          .attr('ry', 12);
       })
       .on('mouseleave', function (this: any, _: any, d: any) {
         d3.select(this)
           .transition()
-          .duration(200)
-          .attr('stroke-width', d.id === Number(id) ? 3 : d.isInfluential ? 2.5 : 2)
-          .attr('filter', 'url(#node-shadow)');
+          .duration(300)
+          .attr('stroke-width', d.id === Number(id) ? 3.5 : d.isInfluential ? 3 : 2)
+          .attr('rx', 10)
+          .attr('ry', 10);
       });
 
     // Title text with word wrapping using foreignObject
@@ -709,6 +769,7 @@ const CitationNetworkPage: React.FC = () => {
       .attr('y', -nodeHeight / 2 + 5)
       .attr('width', nodeWidth - 10)
       .attr('height', nodeHeight - 25) // Leave space for year badge
+      .style('pointer-events', 'none') // Allow drag events to pass through
       .append('xhtml:div')
       .style('width', '100%')
       .style('height', '100%')
@@ -723,6 +784,7 @@ const CitationNetworkPage: React.FC = () => {
       .style('overflow', 'hidden')
       .style('word-wrap', 'break-word')
       .style('padding', '2px')
+      .style('pointer-events', 'none') // Also on the div
       .text((d: any) => {
         const title = d.title || 'Untitled';
         // Allow longer titles since they can wrap
@@ -800,18 +862,47 @@ const CitationNetworkPage: React.FC = () => {
 
     // NO separate labels - text is inside rectangles now
 
-    // Helper function for orthogonal (right-angle) link paths
+// Helper function for link paths - straight lines from edge to edge
     function linkArc(d: any) {
-      const sourceX = d.source.x ?? width / 2;
-      const sourceY = d.source.y ?? height / 2;
-      const targetX = d.target.x ?? width / 2;
-      const targetY = d.target.y ?? height / 2;
-      
-      // Orthogonal path with right angles
-      const midY = (sourceY + targetY) / 2;
-      
-      // Vertical then horizontal path (L-shape or Z-shape)
-      return `M${sourceX},${sourceY} L${sourceX},${midY} L${targetX},${midY} L${targetX},${targetY}`;
+      const nodeWidth = 180;
+      const nodeHeight = 75;
+
+      const sourceX = d.source?.x ?? width / 2;
+      const sourceY = d.source?.y ?? height / 2;
+      const targetX = d.target?.x ?? width / 2;
+      const targetY = d.target?.y ?? height / 2;
+
+      // Calculate angle from source to target
+      const dx = targetX - sourceX;
+      const dy = targetY - sourceY;
+      const angle = Math.atan2(dy, dx);
+
+      // Calculate edge intersection points for rectangles
+      function getEdgePoint(centerX: number, centerY: number, angle: number) {
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const halfW = nodeWidth / 2;
+        const halfH = nodeHeight / 2;
+
+        // Check which edge the line intersects
+        if (Math.abs(cos) > Math.abs(sin) * (halfW / halfH)) {
+          // Intersects left or right edge
+          const x = centerX + (cos > 0 ? halfW : -halfW);
+          const y = centerY + (cos > 0 ? halfW : -halfW) * sin / cos;
+          return { x, y };
+        } else {
+          // Intersects top or bottom edge
+          const x = centerX + (sin > 0 ? halfH : -halfH) * cos / sin;
+          const y = centerY + (sin > 0 ? halfH : -halfH);
+          return { x, y };
+        }
+      }
+
+      const sourceEdge = getEdgePoint(sourceX, sourceY, angle);
+      const targetEdge = getEdgePoint(targetX, targetY, angle + Math.PI);
+
+      // Draw STRAIGHT LINE from source edge to target edge
+      return `M${sourceEdge.x},${sourceEdge.y} L${targetEdge.x},${targetEdge.y}`;
     }
 
     // Drag functions
@@ -821,32 +912,31 @@ const CitationNetworkPage: React.FC = () => {
         d.fx = d.x;
         d.fy = d.y;
       } else {
-        if (!event.active && (svg as any).simulation) (svg as any).simulation.alphaTarget(0.3).restart();
-        event.subject.fx = event.subject.x;
-        event.subject.fy = event.subject.y;
+        // In force layout, fix position and restart simulation
+        d.fx = d.x;
+        d.fy = d.y;
+        if ((svg as any).simulation) {
+          (svg as any).simulation.alphaTarget(0.3).restart();
+        }
       }
     }
 
     function dragged(event: any, d: any) {
+      // Update fixed position as user drags
       d.fx = event.x;
       d.fy = event.y;
-      
-      // Update visual position immediately for tree layout
-      if (useTreeLayout) {
-        d3.select(event.sourceEvent.target.parentNode)
-          .attr('transform', `translate(${event.x},${event.y})`);
-        link.attr('d', linkArc as any);
-      }
     }
 
-    function dragended(event: any) {
+    function dragended(event: any, d: any) {
       if (useTreeLayout) {
         // Keep node at dragged position in tree layout
         // d.fx and d.fy remain set
       } else {
-        if (!event.active && (svg as any).simulation) (svg as any).simulation.alphaTarget(0);
-        event.subject.fx = null;
-        event.subject.fy = null;
+        // In force layout, keep node fixed at dragged position
+        // Don't release fx/fy - let user decide if they want to unfix
+        if ((svg as any).simulation) {
+          (svg as any).simulation.alphaTarget(0);
+        }
       }
     }
 
@@ -949,8 +1039,6 @@ const CitationNetworkPage: React.FC = () => {
         </Box>
 
         <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
-
-
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Depth</InputLabel>
             <Select
@@ -963,6 +1051,15 @@ const CitationNetworkPage: React.FC = () => {
               <MenuItem value={3}>3 Levels</MenuItem>
             </Select>
           </FormControl>
+
+          <Button
+            variant="contained"
+            startIcon={<Add />}
+            onClick={() => setAddNodeDialog(true)}
+            size="small"
+          >
+            Add Reference
+          </Button>
         </Box>
       </Box>
 
@@ -1135,6 +1232,100 @@ const CitationNetworkPage: React.FC = () => {
         </Box>
 
       </Paper>
+
+      {/* Add Manual Node Dialog */}
+      <Dialog
+        open={addNodeDialog}
+        onClose={() => setAddNodeDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Add Reference Manually</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="Paper Title"
+              fullWidth
+              required
+              value={newNodeData.title}
+              onChange={(e) => setNewNodeData({ ...newNodeData, title: e.target.value })}
+              helperText="Enter the full title of the paper"
+            />
+
+            <TextField
+              label="Authors"
+              fullWidth
+              required
+              value={newNodeData.authors}
+              onChange={(e) => setNewNodeData({ ...newNodeData, authors: e.target.value })}
+              helperText="Separate multiple authors with commas"
+            />
+
+            <TextField
+              label="Publication Year"
+              type="number"
+              fullWidth
+              required
+              value={newNodeData.year}
+              onChange={(e) => setNewNodeData({ ...newNodeData, year: parseInt(e.target.value) || new Date().getFullYear() })}
+              inputProps={{ min: 1900, max: new Date().getFullYear() + 1 }}
+            />
+
+            <TextField
+              label="DOI (Optional)"
+              fullWidth
+              value={newNodeData.doi}
+              onChange={(e) => setNewNodeData({ ...newNodeData, doi: e.target.value })}
+              helperText="Digital Object Identifier, e.g., 10.1234/example"
+            />
+
+            <Box>
+              <Typography gutterBottom>
+                Relevance Score: {(newNodeData.relevanceScore * 100).toFixed(0)}%
+              </Typography>
+              <Slider
+                value={newNodeData.relevanceScore}
+                onChange={(_, value) => setNewNodeData({ ...newNodeData, relevanceScore: value as number })}
+                min={0}
+                max={1}
+                step={0.05}
+                marks={[
+                  { value: 0, label: '0%' },
+                  { value: 0.25, label: '25%' },
+                  { value: 0.5, label: '50%' },
+                  { value: 0.75, label: '75%' },
+                  { value: 1, label: '100%' },
+                ]}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
+              />
+              <Typography variant="caption" color="text.secondary">
+                How relevant is this paper to your research?
+              </Typography>
+            </Box>
+
+            <TextField
+              label="Citation Context (Optional)"
+              fullWidth
+              multiline
+              rows={3}
+              value={newNodeData.citationContext}
+              onChange={(e) => setNewNodeData({ ...newNodeData, citationContext: e.target.value })}
+              helperText="Add notes about why this paper is relevant"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddNodeDialog(false)}>Cancel</Button>
+          <Button
+            onClick={() => addManualNodeMutation.mutate(newNodeData)}
+            variant="contained"
+            disabled={!newNodeData.title || !newNodeData.authors || addManualNodeMutation.isPending}
+          >
+            {addManualNodeMutation.isPending ? <CircularProgress size={24} /> : 'Add Reference'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Drawer
         anchor="right"
@@ -1344,6 +1535,39 @@ const CitationNetworkPage: React.FC = () => {
                 View Full Details
               </Button>
 
+              {(() => {
+                // Check if this node already has references in the network
+                const hasReferences = network?.edges?.some((edge: any) => 
+                  (typeof edge.source === 'object' ? edge.source.id : edge.source) === selectedNode.id
+                ) || selectedNodeReferences.length > 0;
+
+                return (
+                  <Button
+                    variant="contained"
+                    fullWidth
+                    startIcon={fetchReferencesMutation.isPending ? <CircularProgress size={20} /> : <AccountTree />}
+                    onClick={() => {
+                      const loadingToast = toast.loading('Fetching references for this paper...');
+                      fetchReferencesMutation.mutate(selectedNode.id, {
+                        onSettled: () => {
+                          toast.dismiss(loadingToast);
+                        },
+                      });
+                    }}
+                    disabled={fetchReferencesMutation.isPending || hasReferences}
+                    sx={{
+                      background: 'linear-gradient(45deg, #9C27B0 30%, #E91E63 90%)',
+                      color: 'white',
+                      '&:hover': {
+                        background: 'linear-gradient(45deg, #7B1FA2 30%, #C2185B 90%)',
+                      },
+                    }}
+                  >
+                    {hasReferences ? '✅ References Already Loaded' : fetchReferencesMutation.isPending ? 'Fetching...' : '📚 Fetch References (Depth 1)'}
+                  </Button>
+                );
+              })()}
+
               {selectedNode.id !== Number(id) && (
                 <>
                   <Button
@@ -1356,29 +1580,6 @@ const CitationNetworkPage: React.FC = () => {
                     }}
                   >
                     View Citation Network
-                  </Button>
-
-                  <Button
-                    variant="contained"
-                    fullWidth
-                    startIcon={fetchNestedMutation.isPending ? <CircularProgress size={20} /> : <AccountTree />}
-                    onClick={() => {
-                      fetchNestedMutation.mutate({
-                        paperId: selectedNode.id,
-                        depth: 1,
-                        maxDepth: 2
-                      });
-                    }}
-                    disabled={fetchNestedMutation.isPending}
-                    sx={{
-                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                      color: 'white',
-                      '&:hover': {
-                        background: 'linear-gradient(45deg, #1976D2 30%, #00ACC1 90%)',
-                      },
-                    }}
-                  >
-                    {fetchNestedMutation.isPending ? 'Fetching...' : '🔗 Fetch References of This Paper'}
                   </Button>
 
                   <Divider sx={{ my: 2 }} />

@@ -25,6 +25,7 @@ export class PdfService {
   async uploadPdf(
     paperId: number,
     file: Express.Multer.File,
+    userId?: number,
   ): Promise<PdfFile> {
     // Verify paper exists
     const paper = await this.papersRepository.findOne({
@@ -57,6 +58,7 @@ export class PdfService {
       fileSize: file.size,
       mimeType: file.mimetype,
       version,
+      uploadedBy: userId,
     });
 
     const savedPdfFile = await this.pdfRepository.save(pdfFile);

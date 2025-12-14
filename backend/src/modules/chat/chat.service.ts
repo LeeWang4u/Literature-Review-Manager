@@ -18,12 +18,11 @@ export class ChatService {
       throw new Error('GEMINI_API_KEY is not configured');
     }
     this.genAI = new GoogleGenerativeAI(apiKey);
-    // Use gemini-2.0-flash-lite - most efficient model for free tier
-    // Falls back to gemini-2.0-flash or gemini-flash-latest if unavailable
+    // Use gemini-2.5-flash - best quality and still has quota
     this.model = this.genAI.getGenerativeModel({ 
-      model: 'gemini-2.0-flash-lite',
+      model: 'gemini-2.5-flash',
     });
-    console.log('✅ Gemini API initialized with model: gemini-2.0-flash-lite');
+    console.log('✅ Gemini API initialized with model: gemini-2.5-flash');
   }
 
   async chat(chatDto: ChatMessageDto): Promise<ChatResponse> {

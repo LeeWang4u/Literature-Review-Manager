@@ -25,7 +25,7 @@ export class CitationParserService {
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
       this.model = this.genAI.getGenerativeModel({ 
-        model: 'gemini-2.0-flash-lite',
+        model: 'gemini-2.5-flash',
         generationConfig: {
           temperature: 0.1, // Low temperature for consistent parsing
           topP: 0.95,
@@ -33,7 +33,7 @@ export class CitationParserService {
           maxOutputTokens: 1024,
         },
       });
-      this.logger.log('✅ Citation Parser AI initialized with Gemini 2.0 Flash Lite');
+      this.logger.log('✅ Citation Parser AI initialized with gemini-2.5-flash');
     } else {
       this.logger.warn('⚠️ GEMINI_API_KEY not configured - citation parsing will be basic');
     }

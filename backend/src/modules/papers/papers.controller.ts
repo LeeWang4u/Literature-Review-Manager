@@ -68,6 +68,13 @@ export class PapersController {
         console.log(`     ${i + 1}. ${ref.title?.substring(0, 50)}... (${ref.year || 'no year'})`);
       });
     }
+    
+    // Log response size
+    const responseSize = JSON.stringify(metadata).length;
+    console.log(`   Response size: ${(responseSize / 1024).toFixed(2)} KB`);
+    if (responseSize > 1024 * 1024) {
+      console.warn(`   ⚠️ WARNING: Response exceeds 1MB! This may cause issues.`);
+    }
     console.log('');
 
     // Check if it's an ArXiv paper and add PDF availability info
@@ -212,44 +219,15 @@ export class PapersController {
     return this.citationsService.autoRateAllReferences(id);
   }
 
-  @Post(':id/fetch-nested-references')
-  @ApiOperation({ 
-    summary: 'Manually fetch nested references (references of references)',
-    description: 'Fetch and process references at specified depth level. Useful for manually building multi-level citation networks.'
-  })
-  @ApiResponse({ status: 200, description: 'Nested references fetched successfully' })
+  @Post(':id/fetch-references')
+  @ApiOperation({ summary: 'Manually fetch and process references for any paper' })
+  @ApiResponse({ status: 200, description: 'References fetched and processed successfully' })
   @ApiResponse({ status: 404, description: 'Paper not found' })
-  async fetchNestedReferences(
-    @Param('id', ParseIntPipe) paperId: number,
-    @Body() body: { depth?: number; maxDepth?: number },
+  async fetchReferences(
+    @Param('id', ParseIntPipe) id: number,
     @Request() req,
   ) {
-    const depth = body.depth || 1;
-    const maxDepth = body.maxDepth || 2;
-    
-    return this.papersService.manuallyFetchNestedReferences(
-      paperId, 
-      req.user.id, 
-      depth, 
-      maxDepth
-    );
-  }
-
-
-  @Post(':id/fetch-nested/eager')
-  async fetchNestedEager(
-    @Param('id') id: string,
-    @Body() body: { targetDepth?: number; maxDepth?: number },
-    @Request() req: any,
-  ) {
-    const userId = req.user?.id;
-    const paperId = Number(id);
-    const targetDepth = body?.targetDepth ?? 1;
-    const maxDepth = body?.maxDepth ?? 2;
-
-    // Calls the existing method that already does "find DOI if missing then fetch refs"
-    const result = await this.papersService.manuallyFetchNestedReferences(paperId, userId, targetDepth, maxDepth);
-    return { success: true, ...result };
+    return this.papersService.fetchReferencesForPaper(id, req.user.id);
   }
 
 }

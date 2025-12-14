@@ -118,6 +118,12 @@ export const QuickAddDialog: React.FC<QuickAddDialogProps> = ({ open, onClose, o
       journal: metadata.journal || '',
       doi: metadata.doi || '',
       url: metadata.url || '',
+      references: metadata.references?.map((ref: { title: any; authors: any; year: any; doi: any; }) => ({
+        title: ref.title || '',
+        authors: ref.authors || '',
+        year: ref.year || undefined,
+        doi: ref.doi || '',
+      })),
     };
 
     createMutation.mutate(paperData);

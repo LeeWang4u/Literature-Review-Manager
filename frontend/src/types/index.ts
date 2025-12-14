@@ -65,6 +65,14 @@ export interface CreatePaperData {
     authors?: string;
     year?: number;
     doi?: string;
+    abstract?: string;
+    citationCount?: number;
+    influentialCitationCount?: number;
+    venue?: string;
+    fieldsOfStudy?: string[];
+    isOpenAccess?: boolean;
+    enriched?: boolean;
+    enrichmentMethod?: string;
     citationContext?: string;
     relevanceScore?: number;
     isInfluential?: boolean;
@@ -105,6 +113,14 @@ export interface PaperMetadataResponse {
     authors?: string;
     year?: number;
     doi?: string;
+    abstract?: string;
+    citationCount?: number;
+    influentialCitationCount?: number;
+    venue?: string;
+    fieldsOfStudy?: string[];
+    isOpenAccess?: boolean;
+    enriched?: boolean;
+    enrichmentMethod?: string;
     isInfluential?: boolean;
   }[];
 }
@@ -243,6 +259,7 @@ export interface AiSummary {
 
 export interface GenerateSummaryData {
   forceRegenerate?: boolean;
+  maxKeyFindings?: number; // Default 5, min 3, max 100
 }
 
 // API Response types

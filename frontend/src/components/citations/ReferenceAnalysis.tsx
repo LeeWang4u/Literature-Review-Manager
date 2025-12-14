@@ -38,7 +38,7 @@ interface ReferenceAnalysisProps {
 const ReferenceAnalysis: React.FC<ReferenceAnalysisProps> = ({
   paperId,
   limit = 10,
-  minRelevance = 0.5,
+  minRelevance = 0.0, // Changed from 0.5 to 0.0 to include low-scored references
 }) => {
   const { data: analysis, isLoading } = useQuery({
     queryKey: ['referenceAnalysis', paperId, limit, minRelevance],

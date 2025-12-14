@@ -50,6 +50,8 @@ interface PaperFormData {
   tags: Tag[];
   references?: {
     title?: string;
+    authors?: string;
+    year?: number;
     doi?: string;
   }[];
 }
@@ -70,6 +72,7 @@ const PaperFormPage: React.FC = () => {
   const [tagConfidence, setTagConfidence] = useState<number>(0);
   const [allTagOptions, setAllTagOptions] = useState<TagOption[]>([]);
   const [aiSuggestedTagNames, setAiSuggestedTagNames] = useState<Set<string>>(new Set());
+  const [tempPaperId, setTempPaperId] = useState<number | null>(null);
 
   const [openDialog, setOpenDialog] = useState(false);
   const [existingPaperId, setExistingPaperId] = useState<number | null>(null);
@@ -190,12 +193,17 @@ const PaperFormPage: React.FC = () => {
   });
   // Update paper mutation
   const updateMutation = useMutation({
-    mutationFn: (data: CreatePaperData) => paperService.update(Number(id), data),
+    mutationFn: (data: CreatePaperData) => {
+      const paperId = id ? Number(id) : tempPaperId;
+      if (!paperId) throw new Error('No paper ID available');
+      return paperService.update(paperId, data);
+    },
     onSuccess: () => {
+      const paperId = id || tempPaperId;
       queryClient.invalidateQueries({ queryKey: ['papers'] });
-      queryClient.invalidateQueries({ queryKey: ['paper', id] });
+      queryClient.invalidateQueries({ queryKey: ['paper', paperId] });
       toast.success('Paper updated successfully!');
-      navigate(`/papers/${id}`);
+      navigate(`/papers/${paperId}`);
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || 'Failed to update paper');
@@ -233,7 +241,7 @@ const PaperFormPage: React.FC = () => {
         }
       }
 
-      toast.success(`Created ${newTags.length} new tag(s)!`, { id: 'create-tags' });
+      toast.dismiss('create-tags');
       queryClient.invalidateQueries({ queryKey: ['tags'] });
     }
 
@@ -250,18 +258,27 @@ const PaperFormPage: React.FC = () => {
       publicationYear: data.publicationYear,
       journal: data.journal || undefined,
       doi: data.doi || undefined,
-      url: data.url || undefined,
-      tagIds: data.tags.map((tag) => tag.id),
-      references: data.references?.map((ref) => ({
+      url: data.url?.trim() || undefined,
+      tagIds: allTagIds,
+      references: data.references?.filter(ref => ref.title && ref.title.trim() !== '').map((ref) => ({
         title: ref.title || '',
+        authors: ref.authors || undefined,
+        year: ref.year || undefined,
         doi: ref.doi || undefined,
-      })),
-      // tagIds: allTagIds,
+      })) || [],
     };
 
+    console.log('🚀 SUBMITTING PAPER DATA:', paperData);
+    console.log('📚 REFERENCES TO SEND:', paperData.references?.length || 0);
+    if (paperData.references && paperData.references.length > 0) {
+      console.log('Sample references to send:', paperData.references.slice(0, 3));
+    }
+
+    // ✅ FIXED: Only update in edit mode, always create for new papers (no temp paper anymore)
     if (isEditMode) {
       updateMutation.mutate(paperData);
     } else {
+      // Always create new paper - references will be processed in background
       createMutation.mutate(paperData);
     }
   };
@@ -277,44 +294,40 @@ const PaperFormPage: React.FC = () => {
     setIsSuggestingTags(true);
 
     try {
-      // For new papers, we need to create a temporary paper to get suggestions
-      // For edit mode, use the existing paper ID
-      let paperId = id ? Number(id) : null;
-
-      if (!paperId) {
-        // Create a temporary paper for tag suggestions
-        toast.loading('Preparing for AI analysis...', { id: 'suggest-tags' });
-
-        const tempPaper = await paperService.create({
+      // ✅ For manual suggest: use text-based API if in create mode
+      if (!isEditMode) {
+        // Use text-based suggestion (no paper creation)
+        const result = await summaryService.suggestTagsFromText({
           title: formValues.title,
-          authors: formValues.authors || 'Unknown',
           abstract: formValues.abstract,
-          publicationYear: formValues.publicationYear || new Date().getFullYear(),
-          journal: formValues.journal || '',
-          doi: formValues.doi || '',
-          url: formValues.url || '',
-          tagIds: [],
+          authors: formValues.authors,
         });
 
-        paperId = tempPaper.id;
+        const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
+        setAiSuggestedTagNames(aiTagNamesSet);
+
+        setSuggestedTags(result.suggested);
+        setTagConfidence(result.confidence);
+
+        toast.success(
+          `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
+          { id: 'suggest-tags', duration: 4000 }
+        );
+      } else {
+        // In edit mode, use existing paper ID
+        const result = await summaryService.suggestTags(Number(id));
+
+        const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
+        setAiSuggestedTagNames(aiTagNamesSet);
+
+        setSuggestedTags(result.suggested);
+        setTagConfidence(result.confidence);
+
+        toast.success(
+          `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
+          { id: 'suggest-tags', duration: 4000 }
+        );
       }
-
-      toast.loading('AI is analyzing your paper...', { id: 'suggest-tags' });
-
-      const result = await summaryService.suggestTags(paperId!);
-
-      // Save AI suggested tag names permanently
-      const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
-      setAiSuggestedTagNames(aiTagNamesSet);
-
-      setSuggestedTags(result.suggested);
-      setTagConfidence(result.confidence);
-
-      // toast.success(
-      //   `Found ${result.suggested.length} relevant tags! (Confidence: ${Math.round(result.confidence * 100)}%)`,
-      //   { id: 'suggest-tags', duration: 4000 }
-      // );
-
     } catch (error: any) {
       console.error('Error suggesting tags:', error);
       toast.error(
@@ -326,28 +339,19 @@ const PaperFormPage: React.FC = () => {
     }
   };
 
-  // Auto suggest tags without creating paper (used after metadata extraction)
-  const handleAutoSuggestTags = async (title: string, abstract: string) => {
+  // Auto suggest tags from text without creating paper (used after metadata extraction)
+  const handleAutoSuggestTags = async (title: string, abstract: string, authors?: string) => {
     if (!title || !abstract) return;
 
     setIsSuggestingTags(true);
 
     try {
-      // Create a temporary paper for tag suggestions
-      const tempPaper = await paperService.create({
+      // ✅ Suggest tags directly from text - NO paper creation needed
+      const result = await summaryService.suggestTagsFromText({
         title: title,
-        authors: control._formValues.authors || 'Unknown',
         abstract: abstract,
-        publicationYear: control._formValues.publicationYear || new Date().getFullYear(),
-        journal: control._formValues.journal || '',
-        doi: control._formValues.doi || '',
-        url: control._formValues.url || '',
-        tagIds: [],
+        authors: authors || control._formValues.authors,
       });
-
-      // console.log('Temporary paper created :', tempPaper);
-
-      const result = await summaryService.suggestTags(tempPaper.id);
 
       // Save AI suggested tag names permanently
       const aiTagNamesSet = new Set(result.suggested.map((name: string) => name.toLowerCase()));
@@ -357,15 +361,7 @@ const PaperFormPage: React.FC = () => {
       setSuggestedTags(result.suggested);
       setTagConfidence(result.confidence);
 
-      // Delete the temporary paper
-      // console.log('Deleting temporary paper with ID:', tempPaper.id);
-      // await paperService.delete(tempPaper.data.id);
-      await paperService.delete(tempPaper.id);
-
-      // toast.success(
-      //   `AI found ${result.suggested.length} relevant tags! Select from dropdown (marked with AI badge). Confidence: ${Math.round(result.confidence * 100)}%`,
-      //   { duration: 5000 }
-      // );
+      console.log(`✅ AI suggested ${result.suggested.length} tags without creating temporary paper`);
 
     } catch (error: any) {
       console.error('Error auto-suggesting tags:', error);
@@ -385,6 +381,12 @@ const PaperFormPage: React.FC = () => {
     try {
       const metadata = await paperMetadataService.extractMetadata(doiInput.trim());
 
+      console.log('EXTRACTED METADATA:', metadata);
+      console.log('REFERENCES IN METADATA:', metadata.references?.length || 0);
+      if (metadata.references && metadata.references.length > 0) {
+        console.log('Sample references:', metadata.references.slice(0, 3));
+      }
+
       // Populate form with extracted metadata
       reset({
         title: metadata.title || '',
@@ -397,9 +399,13 @@ const PaperFormPage: React.FC = () => {
         tags: [], // Keep existing selected tags
         references: metadata.references?.map((ref: any) => ({
           title: ref.title || '',
+          authors: ref.authors || '',
+          year: ref.year || undefined,
           doi: ref.doi || '',
         })) || [],
       });
+
+      console.log('📝 FORM RESET WITH REFERENCES:', metadata.references?.length || 0);
 
       // Mark metadata as extracted
       setMetadataExtracted(true);
@@ -424,7 +430,7 @@ const PaperFormPage: React.FC = () => {
       if (metadata.title && metadata.abstract) {
         // Delay a bit to let the form update
         setTimeout(() => {
-          handleAutoSuggestTags(metadata.title!, metadata.abstract!);
+          handleAutoSuggestTags(metadata.title!, metadata.abstract!, metadata.authors);
         }, 500);
       }
     } catch (error: any) {
