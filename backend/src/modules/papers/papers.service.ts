@@ -91,6 +91,7 @@ export class PapersService {
           {
             success: false,
             message: 'Bài báo này đã tồn tại trong thư viện của bạn.',
+            status: HttpStatus.CONFLICT,
             data: { id: existingPaper.id },
           },
           HttpStatus.CONFLICT, // 409
@@ -680,9 +681,18 @@ export class PapersService {
       );
     }
 
-    // Filter by year
+    // Filter by year (support both exact year and year range)
     if (searchDto.year) {
       query.andWhere('paper.publicationYear = :year', { year: searchDto.year });
+    } else if (searchDto.yearFrom && searchDto.yearTo) {
+      query.andWhere('paper.publicationYear BETWEEN :yearFrom AND :yearTo', { 
+        yearFrom: searchDto.yearFrom, 
+        yearTo: searchDto.yearTo 
+      });
+    } else if (searchDto.yearFrom) {
+      query.andWhere('paper.publicationYear >= :yearFrom', { yearFrom: searchDto.yearFrom });
+    } else if (searchDto.yearTo) {
+      query.andWhere('paper.publicationYear <= :yearTo', { yearTo: searchDto.yearTo });
     }
 
     // Filter by author

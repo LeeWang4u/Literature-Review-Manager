@@ -90,6 +90,7 @@ const PapersPage: React.FC = () => {
       pageSize: 12,
       sortBy,
       sortOrder,
+     
     };
 
     if (searchQuery.trim()) params.query = searchQuery.trim();
@@ -98,14 +99,14 @@ const PapersPage: React.FC = () => {
 
     // Handle year range
     if (yearFrom && yearTo) {
-      // Backend expects single year, so we'll use query for range
-      // This is a limitation - ideally backend should support year range
-      params.year = yearFrom;
+      params.yearFrom = yearFrom;
+      params.yearTo = yearTo;
     } else if (yearFrom) {
-      params.year = yearFrom;
+      params.yearFrom = yearFrom;
     } else if (yearTo) {
-      params.year = yearTo;
+      params.yearTo = yearTo;
     }
+ 
 
     if (selectedTags.length > 0) {
       params.tags = selectedTags.map(tag => tag.id).join(',');
@@ -139,8 +140,7 @@ const PapersPage: React.FC = () => {
   const goToPage = (page: number) => handlePageChange(null, page);
 
   const hasActiveFilters = searchQuery || authorFilter || journalFilter || yearFrom || yearTo || selectedTags.length > 0;
-  console.log(data);
-  console.log(data?.meta.totalPages);
+ 
   return (
     <MainLayout>
       <Container maxWidth="lg">

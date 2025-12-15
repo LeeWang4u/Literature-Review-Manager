@@ -17,8 +17,9 @@ import {
   Divider,
   InputAdornment,
   Dialog, DialogTitle, DialogContent, DialogActions, DialogContentText,
+  IconButton,
 } from '@mui/material';
-import { Save, Cancel, AutoAwesome } from '@mui/icons-material';
+import { Save, Cancel, AutoAwesome, ArrowBack } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { tagService } from '@/services/tag.service';
@@ -168,30 +169,53 @@ const PaperFormPage: React.FC = () => {
 
 
 
-  const createMutation = useMutation({
-    mutationFn: (data: CreatePaperData) => paperService.create(data),
-    // onSuccess: (response) => {
-    //   if (response.success === false) {
+  // const createMutation = useMutation({
+  //   mutationFn: (data: CreatePaperData) => paperService.create(data),
+  //   // onSuccess: (response) => {
+  //   //   if (response.success === false) {
 
-    //     if (response.data?.id) {
-    //       setExistingPaperId(response.data.id);
-    //       setOpenDialog(true);
-    //     }
-    //     return;
-    //   }
-    //   // Phần success
-    //   toast.success(response.message || 'Paper created successfully!');
-    onSuccess: () => {
-      toast.success('Paper created successfully!');
-      queryClient.invalidateQueries({ queryKey: ['papers'] });
-      queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-      navigate('/papers');
-    },
-    onError: (error: any) => {  // Handle real errors (network, server crash, etc.)
-      toast.error(error.message || 'Failed to create paper');
-    },
-  });
+  //   //     if (response.data?.id) {
+  //   //       setExistingPaperId(response.data.id);
+  //   //       setOpenDialog(true);
+  //   //     }
+  //   //     return;
+  //   //   }
+  //   //   // Phần success
+  //   //   toast.success(response.message || 'Paper created successfully!');
+  //   onSuccess: () => {
+  //     toast.success('Paper created successfully!');
+  //     queryClient.invalidateQueries({ queryKey: ['papers'] });
+  //     queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
+  //     navigate('/papers');
+  //   },
+  //   onError: (error: any) => {  // Handle real errors (network, server crash, etc.)
+  //     toast.error(error.message || 'Failed to create paper');
+  //   },
+  // });
   // Update paper mutation
+  const createMutation = useMutation({
+  mutationFn: (data: CreatePaperData) => paperService.create(data),
+  onSuccess: () => {
+    toast.success('Paper created successfully!');
+    queryClient.invalidateQueries({ queryKey: ['papers'] });
+    queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
+    navigate('/papers');
+  },
+  onError: (error: any) => {
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+    if (status === 409) {
+      console.log('Paper already exists error response data:', data);
+      const existingId =  data?.data?.id ?? null;
+      console.log('Existing paper ID from error response:', existingId);
+      if (existingId) setExistingPaperId(existingId);
+      setOpenDialog(true);
+      return;
+    }
+    toast.error(error?.response?.data?.message || error?.message || 'Failed to create paper');
+  },
+});
+  
   const updateMutation = useMutation({
     mutationFn: (data: CreatePaperData) => {
       const paperId = id ? Number(id) : tempPaperId;
@@ -607,9 +631,18 @@ const PaperFormPage: React.FC = () => {
       <MainLayout>
         <Container maxWidth="md">
           <Paper elevation={3} sx={{ p: 4, mt: 2 }}>
-            <Typography variant="h4" gutterBottom>
-              {isEditMode ? 'Edit Paper' : 'Add New Paper'}
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <IconButton
+                onClick={() => navigate(isEditMode ? `/papers/${id}` : '/papers')}
+                sx={{ mr: 1 }}
+                aria-label="back"
+              >
+                <ArrowBack />
+              </IconButton>
+              <Typography variant="h4">
+                {isEditMode ? 'Edit Paper' : 'Add New Paper'}
+              </Typography>
+            </Box>
 
             <Box component="form" onSubmit={handleSubmit(onSubmit)} noValidate sx={{ mt: 3 }}>
               {/* Auto-fill Section - Only show in create mode */}
@@ -667,7 +700,7 @@ const PaperFormPage: React.FC = () => {
                     </Grid>
 
                     {/* ArXiv PDF Download & Quick Save */}
-                    {arxivPdfAvailable && arxivMetadata && (
+                    {/* {arxivPdfAvailable && arxivMetadata && (
                       <Box sx={{ mt: 2 }}>
                         <Alert severity="success">
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -696,7 +729,7 @@ const PaperFormPage: React.FC = () => {
                           </Box>
                         </Alert>
                       </Box>
-                    )}
+                    )} */}
 
                     {/* Quick Save for non-ArXiv papers */}
                     {metadataExtracted && !arxivPdfAvailable && (
@@ -1151,7 +1184,7 @@ const PaperFormPage: React.FC = () => {
                 </Grid>
 
                 {/* Error Display */}
-                {(createMutation.isError || updateMutation.isError) && (
+                {/* {(createMutation.isError || updateMutation.isError) && (
                   <Grid item xs={12}>
                     <Alert severity="error">
                       {(createMutation.error as any)?.response?.data?.message ||
@@ -1159,7 +1192,7 @@ const PaperFormPage: React.FC = () => {
                         'An error occurred while saving the paper'}
                     </Alert>
                   </Grid>
-                )}
+                )} */}
 
                 {/* Action Buttons */}
                 <Grid item xs={12}>

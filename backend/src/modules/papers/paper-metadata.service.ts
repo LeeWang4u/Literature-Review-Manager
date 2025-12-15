@@ -488,6 +488,10 @@ export class PaperMetadataService {
       }
     }
 
+    if (arxivId) {
+      merged.url = `https://arxiv.org/abs/${arxivId}`;
+    }
+
     // For abstract, take the longest one
     let longestAbstract = '';
     sources.forEach(src => {

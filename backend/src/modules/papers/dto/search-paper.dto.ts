@@ -14,6 +14,18 @@ export class SearchPaperDto {
   @Type(() => Number)
   year?: number;
 
+  @ApiProperty({ example: 2017, required: false })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  yearFrom?: number;
+
+  @ApiProperty({ example: 2024, required: false })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  yearTo?: number;
+
   @ApiProperty({ example: 'Vaswani', required: false })
   @IsOptional()
   @IsString()

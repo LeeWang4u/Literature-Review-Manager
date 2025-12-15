@@ -89,6 +89,8 @@ export interface SearchPaperParams {
   pageSize?: number;
   sortBy?: 'title' | 'year' | 'authors' | 'createdAt';
   sortOrder?: 'ASC' | 'DESC';
+  yearFrom?: number;
+  yearTo?: number;
 }
 
 export interface PaperStatistics {

@@ -536,15 +536,8 @@ Where:
   /**
    * Batch AI rating for all citations of a paper
    */
-  async autoRateAllReferences(paperId: number): Promise<{ rated: number; failed: number; citations: Citation[] }> {
-    const citations = await this.getReferences(paperId)
-    
-    console.log(`\n🔍 AUTO-RATING ${citations.length} REFERENCES FOR PAPER ${paperId}`);
-    console.log(`   Using advanced algorithms: network centrality + temporal analysis + context quality\n`);
-    
-    // Get citation network for advanced metrics (use depth 2 for good coverage)
-    const network = await this.getCitationNetwork(paperId, 2);
-    const currentYear = new Date().getFullYear();
+  async autoRateAllReferences(paperId: number, userId: number): Promise<{ rated: number; failed: number; citations: Citation[] }> {
+    const citations = await this.getReferences(paperId);
     
     let rated = 0;
     let failed = 0;
@@ -552,40 +545,7 @@ Where:
 
     for (const citation of citations) {
       try {
-        // First, use AI to get base relevance score
         const updated = await this.autoRateRelevance(citation.id);
-        
-        // Then, enhance with advanced metrics
-        const { totalScore, breakdown } = await this.citationMetricsService.calculateAdvancedScore(
-          updated,
-          network,
-          currentYear
-        );
-        
-        // Get centrality for additional context
-        const centrality = await this.citationMetricsService.calculateCentrality(
-          updated.citedPaperId,
-          network
-        );
-        
-        // Update with enhanced score (combine AI score with advanced metrics)
-        // 70% AI content relevance + 30% advanced metrics
-        const enhancedScore = (updated.relevanceScore * 0.7) + (totalScore * 0.3);
-        updated.relevanceScore = Math.min(enhancedScore, 1.0);
-        
-        // Mark as influential if highly cited in network
-        if (centrality.inDegree >= 3 || totalScore >= 0.8) {
-          updated.isInfluential = true;
-        }
-        
-        await this.citationsRepository.save(updated);
-        
-        console.log(`   ✓ Rated citation ${citation.id}: ${(enhancedScore * 100).toFixed(0)}% relevance`);
-        console.log(`     - AI Content: ${(updated.relevanceScore * 0.7 * 100).toFixed(0)}%`);
-        console.log(`     - Network Importance: ${(breakdown.networkImportance * 100).toFixed(0)}%`);
-        console.log(`     - Temporal Relevance: ${(breakdown.temporalRelevance * 100).toFixed(0)}%`);
-        console.log(`     - In-degree: ${centrality.inDegree} citations${updated.isInfluential ? ' (INFLUENTIAL)' : ''}`);
-        
         results.push(updated);
         rated++;
         

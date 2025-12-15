@@ -144,7 +144,8 @@ export class LibraryService {
     .createQueryBuilder('library')
     .innerJoinAndSelect('library.paper', 'paper')
     .leftJoinAndSelect('paper.tags', 'tags')
-    .where('library.userId = :userId', { userId });
+    .where('library.userId = :userId', { userId })
+    .andWhere('paper.isReference = :isReference', { isReference: false });
 
   // 1. Áp dụng bộ lọc status nếu có
   if (filters.status) {

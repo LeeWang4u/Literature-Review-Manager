@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+
 import {
   Container,
   Typography,
@@ -21,7 +22,7 @@ import {
 } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
-import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, LibraryAdd } from '@mui/icons-material';
+import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, LibraryAdd, ArrowBack } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { pdfService } from '@/services/pdf.service';
@@ -229,7 +230,10 @@ const PaperDetailPage: React.FC = () => {
       <MainLayout>
         <Container maxWidth="md">
           <Paper elevation={3} sx={{ p: 4 }}>
-            <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+            <Box display="flex" alignItems="center" gap={1} mb={2}>
+              <IconButton onClick={() => navigate('/papers')} aria-label="back" sx={{ mr: 1 }}>
+                <ArrowBack />
+              </IconButton>
               <Typography variant="h4" gutterBottom sx={{ flex: 1 }}>
                 {paper.title}
               </Typography>

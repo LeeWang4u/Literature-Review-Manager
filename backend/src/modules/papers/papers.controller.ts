@@ -216,7 +216,7 @@ export class PapersController {
     @Param('id', ParseIntPipe) id: number,
     @Request() req,
   ) {
-    return this.citationsService.autoRateAllReferences(id);
+    return this.citationsService.autoRateAllReferences(id, req.user.id);
   }
 
   @Post(':id/fetch-references')

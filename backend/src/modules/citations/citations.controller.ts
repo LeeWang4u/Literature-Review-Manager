@@ -121,7 +121,7 @@ export class CitationsController {
     @Param('paperId', ParseIntPipe) paperId: number,
     @Req() req
   ) {
-    return this.citationsService.autoRateAllReferences(paperId);
+    return this.citationsService.autoRateAllReferences(paperId, req.user.id);
   }
 
   @Get('paper/:paperId/analyze')
