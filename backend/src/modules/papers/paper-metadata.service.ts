@@ -6,6 +6,7 @@ import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as pdfParse from 'pdf-parse';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { CitationParserService } from '../citations/citation-parser.service';
 
 export interface PaperMetadata {
   title: string;
@@ -24,6 +25,14 @@ export interface PaperMetadata {
     authors?: string;
     year?: number;
     doi?: string;
+    abstract?: string;
+    citationCount?: number;
+    influentialCitationCount?: number;
+    venue?: string;
+    fieldsOfStudy?: string[];
+    isOpenAccess?: boolean;
+    enriched?: boolean;
+    enrichmentMethod?: string;
   }[];
 }
 
@@ -36,7 +45,9 @@ export class PaperMetadataService {
   private readonly semanticScholarApiKey = process.env.SEMANTIC_SCHOLAR_API_KEY || '';
   private genAI: GoogleGenerativeAI;
 
-  constructor() {
+  constructor(
+    private readonly citationParserService: CitationParserService,
+  ) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       this.logger.warn('⚠️ GEMINI_API_KEY not configured. AI DOI finding will not work.');
@@ -53,6 +64,59 @@ export class PaperMetadataService {
       this.logger.debug('Using Semantic Scholar API key');
     }
     return headers;
+  }
+
+  /**
+   * Extract DOI from URL or string
+   */
+  extractDoiFromUrl(url: string): string | null {
+    if (!url) return null;
+    
+    // Pattern 1: https://doi.org/10.xxxx/xxxxx
+    const doiPattern1 = /doi\.org\/(10\.\d+\/[^\s]+)/i;
+    const match1 = url.match(doiPattern1);
+    if (match1) return match1[1];
+    
+    // Pattern 2: doi:10.xxxx/xxxxx
+    const doiPattern2 = /doi:\s*(10\.\d+\/[^\s]+)/i;
+    const match2 = url.match(doiPattern2);
+    if (match2) return match2[1];
+    
+    // Pattern 3: Just the DOI itself (10.xxxx/xxxxx)
+    const doiPattern3 = /\b(10\.\d+\/[^\s]+)/;
+    const match3 = url.match(doiPattern3);
+    if (match3) return match3[1];
+    
+    return null;
+  }
+
+  /**
+   * Extract arXiv ID from URL or filename
+   */
+  extractArxivId(text: string): string | null {
+    if (!text) return null;
+    
+    // Pattern 1: https://arxiv.org/abs/2401.12345
+    const arxivPattern1 = /arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/i;
+    const match1 = text.match(arxivPattern1);
+    if (match1) return match1[1];
+    
+    // Pattern 2: arxiv:2401.12345 or arXiv:2401.12345
+    const arxivPattern2 = /arxiv:\s*(\d{4}\.\d{4,5})/i;
+    const match2 = text.match(arxivPattern2);
+    if (match2) return match2[1];
+    
+    // Pattern 3: In filename like "arxiv-2401.12345-timestamp.pdf"
+    const arxivPattern3 = /arxiv-(\d{4}\.\d{4,5})/i;
+    const match3 = text.match(arxivPattern3);
+    if (match3) return match3[1];
+    
+    // Pattern 4: Just the ID (2401.12345 or 2512.04602)
+    const arxivPattern4 = /\b(\d{4}\.\d{4,5})\b/;
+    const match4 = text.match(arxivPattern4);
+    if (match4) return match4[1];
+    
+    return null;
   }
 
   /**
@@ -115,7 +179,8 @@ export class PaperMetadataService {
           year: year,
           doi: ref.externalIds?.DOI || '',
         };
-      });
+      })
+      .filter(ref => this.isValidReference(ref)); // Apply validation
   }
 
   /**
@@ -231,6 +296,74 @@ export class PaperMetadataService {
     });
     const data = response.data.message;
     return this.mapCrossrefToMetadata(data, doi);
+  }
+
+  /**
+   * Public method for reference enrichment - fetches citation metrics and metadata
+   */
+  async fetchSemanticScholarMetadata(identifier: string): Promise<{
+    authors?: string;
+    year?: number;
+    abstract?: string;
+    citationCount?: number;
+    influentialCitationCount?: number;
+    venue?: string;
+    fieldsOfStudy?: string[];
+    isOpenAccess?: boolean;
+  }> {
+    try {
+      const encodedId = encodeURIComponent(identifier);
+      const fields = 'title,authors,abstract,year,venue,citationCount,influentialCitationCount,isOpenAccess,fieldsOfStudy,externalIds';
+      
+      const response = await axios.get(`${this.semanticScholarBaseUrl}/${encodedId}`, {
+        params: { fields },
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'LiteratureReviewApp/1.0',
+          ...this.getSemanticScholarHeaders(),
+        },
+      });
+
+      const data = response.data;
+      
+      const result = {
+        authors: data.authors?.map((a: any) => a.name).join(', ') || undefined,
+        year: data.year || undefined,
+        abstract: data.abstract || undefined,
+        citationCount: data.citationCount || 0,
+        influentialCitationCount: data.influentialCitationCount || 0,
+        venue: data.venue || undefined,
+        fieldsOfStudy: data.fieldsOfStudy || [],
+        isOpenAccess: data.isOpenAccess || false,
+      };
+      
+      // Log abstract status for debugging
+      if (result.abstract && result.abstract.trim()) {
+        this.logger.debug(`✅ Abstract found via S2 (${result.abstract.length} chars)`);
+      } else {
+        this.logger.debug(`⚠️ No abstract from S2 for: ${identifier}`);
+        
+        // Try fallback to CrossRef if DOI available
+        const doi = data.externalIds?.DOI;
+        if (doi) {
+          try {
+            this.logger.debug(`Trying CrossRef fallback for abstract...`);
+            const crossrefData = await this.fetchFromCrossref(doi);
+            if (crossrefData.abstract) {
+              result.abstract = crossrefData.abstract;
+              this.logger.debug(`✅ Abstract found via CrossRef (${crossrefData.abstract.length} chars)`);
+            }
+          } catch (crossrefError) {
+            this.logger.debug(`CrossRef fallback failed: ${crossrefError.message}`);
+          }
+        }
+      }
+      
+      return result;
+    } catch (error: any) {
+      this.logger.debug(`Semantic Scholar enrichment failed for ${identifier}: ${error.message}`);
+      throw new Error(`Failed to fetch from Semantic Scholar: ${error.message}`);
+    }
   }
 
   private async fetchFromSemanticScholar(identifier: string): Promise<Partial<PaperMetadata>> {
@@ -399,6 +532,29 @@ export class PaperMetadataService {
     return merged as PaperMetadata;
   }
 
+  /**
+   * Validate if a reference is meaningful
+   */
+  private isValidReference(ref: { title?: string; authors?: string; year?: number; doi?: string }): boolean {
+    if (!ref.title || ref.title.trim().length === 0) return false;
+    
+    // Filter out very short titles (likely parse errors)
+    if (ref.title.trim().length < 10) return false;
+    
+    // Filter out titles that are just numbers
+    if (/^\d+(\.\d+)?$/.test(ref.title.trim())) return false;
+    
+    // Filter out titles that start with just numbers and newline
+    if (/^\d+\s*\n/.test(ref.title)) return false;
+    
+    // Require at least one of: authors, year, or DOI (in addition to title)
+    const hasAuthors = ref.authors && ref.authors.toLowerCase() !== 'unknown' && ref.authors.trim().length > 0;
+    const hasYear = ref.year && ref.year > 1900 && ref.year <= new Date().getFullYear() + 1;
+    const hasDoi = ref.doi && ref.doi.trim().length > 0;
+    
+    return hasAuthors || hasYear || hasDoi;
+  }
+
   private async parseReferencesFromPdf(pdfBuffer: Buffer): Promise<PaperMetadata['references']> {
     try {
       const data = await pdfParse(pdfBuffer);
@@ -414,19 +570,36 @@ export class PaperMetadataService {
       // Split into individual references based on numbered lines
       const refLines = refText.split(/\n(?=\[\d+\]|\d+\.)/)
         .map(ref => ref.trim())
-        .filter(ref => ref.length > 0);
+        .filter(ref => ref.length > 20); // Skip very short lines
 
-      const references = refLines.map(ref => {
-        // Basic parsing: extract DOI if possible
-        const doiMatch = ref.match(/doi:\s*([^\s]+)/i) || ref.match(/(10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+)/i);
-        const title = ref; // Use the whole ref as title for simplicity; can improve
-        return {
-          title,
-          doi: doiMatch ? doiMatch[1] : '',
-        };
-      });
+      const references: PaperMetadata['references'] = [];
+      let successfulParses = 0;
+      let failedParses = 0;
 
-      this.logger.log(`Extracted ${references.length} references from PDF`);
+      for (const ref of refLines) {
+        try {
+          // Parse the citation using AI
+          const parsed = await this.citationParserService.parseCitation(ref);
+          
+          if (parsed && this.isValidReference(parsed)) {
+            references.push({
+              title: parsed.title,
+              authors: parsed.authors || '',
+              year: parsed.year,
+              doi: parsed.doi || '',
+            });
+            successfulParses++;
+          } else {
+            failedParses++;
+            this.logger.debug(`Skipped invalid reference: ${ref.substring(0, 50)}...`);
+          }
+        } catch (parseError) {
+          failedParses++;
+          this.logger.warn(`Failed to parse citation: ${ref.substring(0, 100)}... Error: ${parseError.message}`);
+        }
+      }
+
+      this.logger.log(`Extracted ${references.length} valid references from PDF (successful: ${successfulParses}, filtered: ${failedParses})`);
       return references;
     } catch (error) {
       this.logger.error(`Failed to parse PDF for references: ${error.message}`);
@@ -470,10 +643,24 @@ export class PaperMetadataService {
           headers: { 'User-Agent': 'LiteratureReviewApp/1.0 (mailto:support@literaturereview.com)' },
           timeout: 10000,
         });
-        refs = response.data.message.reference?.map((ref: any) => ({
-          title: ref.article_title || ref.unstructured || '',
-          doi: ref.DOI || '',
-        })) || [];
+        
+        // Convert Crossref format to Semantic Scholar format for consistent processing
+        const crossrefRefs = response.data.message.reference?.map((ref: any) => {
+          this.logger.debug(`Raw Crossref ref: ${JSON.stringify(ref)}`);
+          return {
+            title: ref['article-title'] || ref.article_title || '',
+            year: ref.year || ref['journal-issue']?.['published-print']?.['date-parts']?.[0]?.[0],
+            authors: ref.author?.map((a: any) => ({ 
+              name: `${a.given || ''} ${a.family || ''}`.trim() 
+            })).filter((a: any) => a.name.length > 0) || [],
+            externalIds: {
+              DOI: ref.doi || ref.DOI || '',
+            },
+          };
+        }).filter((ref: any) => ref.title && ref.title.length > 3) || []; // Filter out very short or empty titles
+        
+        // Use processReferences for consistent year extraction and formatting
+        refs = this.processReferences(crossrefRefs);
         if (refs.length > 0) {
           return refs;
         }
@@ -567,7 +754,8 @@ export class PaperMetadataService {
         authors: ref.author?.map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()).filter((name: string) => name.length > 0).join(', ') || '',
         year: ref.year || ref['journal-issue']?.['published-print']?.['date-parts']?.[0]?.[0] || undefined,
         doi: ref.DOI || '',
-      }));
+      }))
+      .filter(ref => this.isValidReference(ref)); // Apply validation to filter out incomplete references
 
     return {
       title: data.title?.[0] || '',
@@ -593,7 +781,7 @@ export class PaperMetadataService {
 
     const doi = data.externalIds?.DOI || data.externalIds?.ArXiv || '';
 
-    // Filter and prioritize references
+    // Filter and prioritize references using multi-factor scoring
     let references = data.references || [];
 
     this.logger.log(`Semantic Scholar returned ${references.length} references`);
@@ -607,16 +795,56 @@ export class PaperMetadataService {
         this.logger.log(`    year field: ${ref.year}`);
       });
     }
-
-    // Sort by year (newest first)
-    references = this.processReferences(references)
-      .sort((a: any, b: any) => {
-        return (b.year || 0) - (a.year || 0);
-      })
-      .slice(0, 50);  // Limit to 50 references
-
-    this.logger.log(`Filtered and mapped ${references.length} references for paper`);
-
+    
+    // Process and score references
+    const processedRefs = this.processReferences(references);
+    const currentYear = new Date().getFullYear();
+    
+    // Calculate importance score for each reference (0-100)
+    const scoredReferences = processedRefs.map((ref: any) => {
+      let score = 0;
+      
+      // 1. Influential papers get highest priority (40 points)
+      if (ref.isInfluential) {
+        score += 40;
+      }
+      
+      // 2. Recency score - newer papers (30 points)
+      if (ref.year) {
+        const age = currentYear - ref.year;
+        if (age <= 2) score += 30;        // Very recent (0-2 years)
+        else if (age <= 5) score += 25;   // Recent (3-5 years)
+        else if (age <= 10) score += 15;  // Moderately recent (6-10 years)
+        else if (age <= 20) score += 5;   // Older but relevant (11-20 years)
+        // Older than 20 years: 0 points (unless influential)
+      } else {
+        score += 5; // Small penalty for missing year
+      }
+      
+      // 3. Complete metadata (20 points)
+      if (ref.authors && ref.authors.length > 0) score += 10;
+      if (ref.doi) score += 10;
+      
+      // 4. Title quality (10 points)
+      if (ref.title && ref.title.length > 20) score += 10;
+      
+      return { ...ref, importanceScore: score };
+    });
+    
+    // Sort by importance score (highest first)
+    // Phase 1: Select top 50 candidates for initial processing
+    // Phase 2 (in papers.service): Will use graph analysis to narrow to top 20
+    references = scoredReferences
+      .sort((a: any, b: any) => b.importanceScore - a.importanceScore)
+      .slice(0, 50);  // Top 50 candidates for graph analysis
+    
+    this.logger.log(`Selected top 50 reference candidates for graph analysis:`);
+    this.logger.log(`  - Influential papers: ${references.filter((r: any) => r.isInfluential).length}`);
+    this.logger.log(`  - Recent papers (≤5 years): ${references.filter((r: any) => r.year && (currentYear - r.year) <= 5).length}`);
+    this.logger.log(`  - With DOI: ${references.filter((r: any) => r.doi).length}`);
+    this.logger.log(`  - Avg initial score: ${(references.reduce((sum: number, r: any) => sum + r.importanceScore, 0) / references.length).toFixed(1)}`);
+    this.logger.log(`  ⚠️  Will be narrowed to top 20 using citation network analysis`);
+    
     // Log year distribution
     const withYear = references.filter((r: any) => r.year).length;
     const withoutYear = references.length - withYear;
@@ -651,21 +879,6 @@ export class PaperMetadataService {
 
     this.logger.log(`ArXiv PDF downloaded successfully, size: ${response.data.length} bytes`);
     return Buffer.from(response.data);
-  }
-
-  public extractArxivId(input: string): string | null {
-    console.log(`Extracting ArXiv ID from input for pdf: ${input}`);
-    const urlMatch = input.match(/arxiv\.org\/(?:abs|pdf)\/([^\/v]+)/i);
-    if (urlMatch) {
-      return urlMatch[1].replace('.pdf', '');
-    }
-
-    const idMatch = input.match(/(?:arxiv:)?(\d+\.\d+(?:v\d+)?)/i);
-    if (idMatch) {
-      return idMatch[1];
-    }
-
-    return null;
   }
 
   /**
@@ -835,6 +1048,98 @@ DOI:`;
     } catch (error) {
       this.logger.error(`AI DOI finding failed: ${error.message}`);
       return null;
+    }
+  }
+
+  /**
+   * Enrich a list of references with additional metadata including abstracts
+   */
+  async enrichReferences(references: PaperMetadata['references']): Promise<PaperMetadata['references']> {
+    this.logger.log(`🔍 Starting enrichment of ${references.length} references...`);
+
+    if (!references || references.length === 0) {
+      this.logger.log(`⚠️ No references to enrich`);
+      return references;
+    }
+
+    const enrichedPromises = references.map(ref =>
+      this.enrichSingleReference(ref).catch(err => {
+        this.logger.debug(`❌ Enrichment failed for "${ref.title?.substring(0, 40)}": ${err.message}`);
+        return { ...ref, enriched: false };
+      })
+    );
+
+    const enrichedRefs = await Promise.all(enrichedPromises);
+    const enrichedCount = enrichedRefs.filter(r => r.enriched).length;
+
+    this.logger.log(`✅ Enrichment complete: ${enrichedCount}/${references.length} references enriched with abstracts`);
+
+    return enrichedRefs;
+  }
+
+  /**
+   * Enrich a single reference with metadata from Semantic Scholar
+   */
+  private async enrichSingleReference(ref: any): Promise<any> {
+    try {
+      let s2Data: any = null;
+      let enrichmentMethod = 'none';
+
+      // Strategy 1: Try DOI first (most reliable)
+      if (ref.doi) {
+        try {
+          s2Data = await this.fetchSemanticScholarMetadata(`DOI:${ref.doi}`);
+          enrichmentMethod = 'doi';
+          this.logger.debug(`✅ Enriched via DOI: ${ref.doi}`);
+        } catch (doiError) {
+          this.logger.debug(`DOI lookup failed for ${ref.doi}: ${doiError.message}`);
+        }
+      }
+
+      // Strategy 2: Fallback to title search if DOI failed or unavailable
+      if (!s2Data && ref.title) {
+        try {
+          s2Data = await this.fetchSemanticScholarMetadata(ref.title);
+          enrichmentMethod = 'title';
+          this.logger.debug(`✅ Enriched via title: "${ref.title.substring(0, 40)}..."`);
+        } catch (titleError) {
+          this.logger.debug(`Title lookup failed: ${titleError.message}`);
+        }
+      }
+
+      // If enrichment succeeded, merge data
+      if (s2Data) {
+        const enrichedRef = {
+          ...ref,
+          authors: ref.authors || s2Data.authors,
+          year: ref.year || s2Data.year,
+          abstract: s2Data.abstract || ref.abstract || '',
+          citationCount: s2Data.citationCount || 0,
+          influentialCitationCount: s2Data.influentialCitationCount || 0,
+          venue: s2Data.venue || ref.venue || '',
+          fieldsOfStudy: s2Data.fieldsOfStudy || [],
+          isOpenAccess: s2Data.isOpenAccess || false,
+          enriched: true,
+          enrichmentMethod,
+        };
+
+        // Log abstract status
+        if (enrichedRef.abstract && enrichedRef.abstract.trim() !== '') {
+          this.logger.debug(`  📄 Abstract fetched (${enrichedRef.abstract.length} chars) via ${enrichmentMethod}`);
+        } else {
+          this.logger.debug(`  ⚠️ No abstract available from ${enrichmentMethod}`);
+        }
+
+        return enrichedRef;
+      }
+
+      // No enrichment succeeded
+      this.logger.debug(`❌ Enrichment failed for: "${ref.title?.substring(0, 40)}..."`);
+      return { ...ref, enriched: false };
+
+    } catch (error) {
+      this.logger.debug(`Enrichment error: ${error.message}`);
+      return { ...ref, enriched: false };
     }
   }
 }

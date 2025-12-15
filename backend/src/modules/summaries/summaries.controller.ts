@@ -40,6 +40,7 @@ export class SummariesController {
       req.user.id,
       generateSummaryDto.forceRegenerate || false,
       generateSummaryDto.provider || 'gemini',
+      generateSummaryDto.maxKeyFindings || 5,
     );
   }
 

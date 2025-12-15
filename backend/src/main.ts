@@ -33,7 +33,14 @@ async function bootstrap() {
   // Tạo database trước khi khởi động app
   await ensureDatabaseExists();
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    bodyParser: true,
+    rawBody: true,
+  });
+
+  // Increase body size limit for large requests (PDF uploads, AI responses)
+  app.use(require('express').json({ limit: '50mb' }));
+  app.use(require('express').urlencoded({ limit: '50mb', extended: true }));
 
   // Enable CORS
   app.enableCors({

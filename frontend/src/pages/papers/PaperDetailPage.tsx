@@ -113,6 +113,8 @@ const PaperDetailPage: React.FC = () => {
     },
   });
 
+
+
   if (isLoading) {
     return (
       <MainLayout>

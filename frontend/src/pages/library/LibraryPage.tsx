@@ -109,7 +109,7 @@ const LibraryPage: React.FC = () => {
   const { data: libraryData, isLoading } = useQuery<LibraryResponse>({
     queryKey: ['library', currentTab, page, debouncedSearchQuery],
     queryFn: async () => {
-      console.log(`📚 Fetching library data for tab: ${currentTab}...`);
+     
       const statusToFetch = currentTab === 'favorites' ? undefined : currentTab;
       const favoriteToFetch = currentTab === 'favorites' ? true : undefined;
 
@@ -120,7 +120,7 @@ const LibraryPage: React.FC = () => {
         pageSize,
         search: debouncedSearchQuery || undefined,
       });
-      console.log(`✅ Library data received for ${currentTab}:`, result);
+     
       return result as unknown as LibraryResponse;
     },
     placeholderData: (previousData) => previousData,
@@ -138,8 +138,7 @@ const LibraryPage: React.FC = () => {
     setPage(1);
   }, [currentTab, debouncedSearchQuery]);
 
-  console.log('📊 Library Page State:', { library, isLoading, currentTab });
-
+ 
   // Mutations
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>

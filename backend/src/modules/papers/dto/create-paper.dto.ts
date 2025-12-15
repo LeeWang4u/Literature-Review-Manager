@@ -83,9 +83,14 @@ export class CreatePaperDto {
   @ApiProperty({ example: [1, 2, 3], required: false, type: [Number] })
   @IsArray()
   @IsOptional()
-  @IsInt({ each: true })
   @Type(() => Number)
+  @IsInt({ each: true })
   tagIds?: number[];
+
+  @ApiProperty({ example: true, required: false })
+  @IsOptional()
+  @Type(() => Boolean)
+  isReference?: boolean;
 
   @ApiProperty({
     type: () => ReferenceDto,  // Sử dụng lazy resolver và class riêng
