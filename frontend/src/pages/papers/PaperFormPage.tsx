@@ -699,38 +699,6 @@ const PaperFormPage: React.FC = () => {
                       </Grid>
                     </Grid>
 
-                    {/* ArXiv PDF Download & Quick Save */}
-                    {/* {arxivPdfAvailable && arxivMetadata && (
-                      <Box sx={{ mt: 2 }}>
-                        <Alert severity="success">
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <Box sx={{ flexGrow: 1 }}>
-                              <Typography variant="body2">
-                                <strong>PDF Available!</strong> This is an ArXiv paper with free PDF access.
-                              </Typography>
-                            </Box>
-                            <Button
-                              variant="outlined"
-                              color="success"
-                              size="small"
-                              onClick={handleDownloadArxivPdf}
-                            >
-                              Download PDF
-                            </Button>
-                            <Button
-                              variant="contained"
-                              color="success"
-                              size="small"
-                              onClick={handleQuickSave}
-                              startIcon={<Save />}
-                            >
-                              Save Paper
-                            </Button>
-                          </Box>
-                        </Alert>
-                      </Box>
-                    )} */}
-
                     {/* Quick Save for non-ArXiv papers */}
                     {metadataExtracted && !arxivPdfAvailable && (
                       <Box sx={{ mt: 2 }}>

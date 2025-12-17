@@ -22,12 +22,11 @@ import {
 } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
-import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, LibraryAdd, ArrowBack } from '@mui/icons-material';
+import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, ArrowBack } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { pdfService } from '@/services/pdf.service';
 import { noteService } from '@/services/note.service';
-import { libraryService } from '@/services/library.service';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -78,26 +77,6 @@ const PaperDetailPage: React.FC = () => {
   });
 
 
-
-  const { data: isInLibrary = false } = useQuery({
-    queryKey: ['inLibrary', id],
-    queryFn: () => libraryService.getInLibrary(Number(id)),
-  });
-
-  // Add to library mutation
-  const addToLibraryMutation = useMutation({
-    mutationFn: () => libraryService.addToLibrary({
-      paperId: Number(id),
-      // status: ReadingStatus.TO_READ
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['library'] });
-      toast.success('Paper added to library!');
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to add to library');
-    },
-  });
 
   // Delete paper mutation
   const deleteMutation = useMutation({
@@ -171,11 +150,6 @@ const PaperDetailPage: React.FC = () => {
     }
   };
 
-
-  const handleAddToLibrary = () => {
-    addToLibraryMutation.mutate();
-  };
-
   const handleDelete = () => {
     // if (window.confirm('Are you sure you want to delete this paper? This action cannot be undone.')) {
     //   deleteMutation.mutate();
@@ -238,27 +212,6 @@ const PaperDetailPage: React.FC = () => {
                 {paper.title}
               </Typography>
               <Box display="flex" gap={1}>
-                {!isInLibrary && (
-                  <Tooltip title="Add to Library">
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      startIcon={<LibraryAdd />}
-                      onClick={handleAddToLibrary}
-                      disabled={addToLibraryMutation.isPending}
-                      sx={{ mr: 1 }}
-                    >
-                      Add to Library
-                    </Button>
-                  </Tooltip>
-                )}
-                {isInLibrary && (
-                  <Chip
-                    label="In Library"
-                    color="success"
-                    sx={{ mr: 1, height: 36 }}
-                  />
-                )}
                 <Tooltip title="Edit Paper">
                   <IconButton
                     color="primary"
@@ -286,7 +239,6 @@ const PaperDetailPage: React.FC = () => {
               </Typography>
 
               <Box display="flex" gap={1}>
-                {isInLibrary && (
                   <Box display="flex" alignItems="center" gap={1}>
                     {/* Dropdown chọn trạng thái */}
                     <FormControl size="small" variant="outlined">
@@ -317,9 +269,6 @@ const PaperDetailPage: React.FC = () => {
                       )}
                     </IconButton>
                   </Box>
-                )
-
-                }
               </Box>
 
             </Box>

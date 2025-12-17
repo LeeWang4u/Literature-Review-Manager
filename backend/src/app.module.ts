@@ -10,7 +10,6 @@ import { PapersModule } from './modules/papers/papers.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { NotesModule } from './modules/notes/notes.module';
 import { CitationsModule } from './modules/citations/citations.module';
-import { LibraryModule } from './modules/library/library.module';
 import { PdfModule } from './modules/pdf/pdf.module';
 import { SummariesModule } from './modules/summaries/summaries.module';
 import { ChatModule } from './modules/chat/chat.module';
@@ -33,7 +32,6 @@ import { ChatModule } from './modules/chat/chat.module';
     TagsModule,
     NotesModule,
     CitationsModule,
-    LibraryModule,
     PdfModule,
     SummariesModule,
     ChatModule,

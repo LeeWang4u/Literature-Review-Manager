@@ -10,6 +10,7 @@ import {
   UseGuards,
   Request,
   ParseIntPipe,
+  Patch,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { PapersService } from './papers.service';
@@ -228,6 +229,90 @@ export class PapersController {
     @Request() req,
   ) {
     return this.papersService.fetchReferencesForPaper(id, req.user.id);
+  }
+
+  @Get(':id/statistics')
+  @ApiOperation({ summary: 'Get statistics for a specific paper' })
+  @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  async getStatisticsForPaper(
+    @Request() req,
+  ) {
+    return this.papersService.getPaperStatusStatistics( req.user.id);
+  }
+
+  @Patch(':id/favorite')
+  @ApiOperation({ summary: 'Toggle favorite status of a paper' })
+  @ApiResponse({ status: 200, description: 'Favorite status updated successfully' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  async toggleFavorite(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('favorite') favorite: boolean,
+    @Request() req,
+  ) {
+    return this.papersService.toggleFavorite(id, favorite, req.user.id);
+  }
+
+  // ===== LIBRARY ENDPOINTS (migrated from library module) =====
+
+  @Get('library/filter')
+  @ApiOperation({ summary: 'Get filtered library papers (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Library items retrieved successfully' })
+  async getFilteredLibrary(
+    @Query('status') status?: string,
+    @Query('favorite') favorite?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
+    @Request() req?,
+  ) {
+    return this.papersService.getLibrary(req.user.id, {
+      status,
+      favorite: favorite === 'true' ? true : favorite === 'false' ? false : undefined,
+      page: page ? parseInt(page) : 1,
+      pageSize: pageSize ? parseInt(pageSize) : 10,
+      search,
+    });
+  }
+
+  @Get('library/statistics')
+  @ApiOperation({ summary: 'Get library statistics (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
+  async getLibraryStatistics(@Request() req) {
+    return this.papersService.getPaperStatusStatistics(req.user.id);
+  }
+
+  @Put('library/:id/status')
+  @ApiOperation({ summary: 'Update paper status in library (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Status updated successfully' })
+  async updateLibraryStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('status') status: string,
+    @Request() req,
+  ) {
+    return this.papersService.updatePaperStatus(id, req.user.id, status);
+  }
+
+  @Delete('library/:id')
+  @ApiOperation({ summary: 'Remove paper from library (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Paper removed successfully' })
+  async removeFromLibrary(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req,
+  ) {
+    await this.papersService.removePaper(id, req.user.id);
+    return { message: 'Paper removed from library' };
+  }
+
+  @Patch('library/:id/favorite')
+  @ApiOperation({ summary: 'Toggle favorite in library (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Favorite updated successfully' })
+  async toggleLibraryFavorite(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('favorite') favorite: boolean,
+    @Request() req,
+  ) {
+    return this.papersService.toggleFavorite(id, favorite, req.user.id);
   }
 
 }

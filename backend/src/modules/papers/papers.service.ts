@@ -9,7 +9,6 @@ import { UpdatePaperDto } from './dto/update-paper.dto';
 import { SearchPaperDto } from './dto/search-paper.dto';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { LibraryService } from '../library/library.service';
 import { CitationsService } from '../citations/citations.service';
 import { CitationParserService } from '../citations/citation-parser.service';
 import { CitationMetricsService } from '../citations/citation-metrics.service';
@@ -33,7 +32,7 @@ export class PapersService {
     @InjectRepository(Note)
     private notesRepository: Repository<Note>,
 
-    private libraryService: LibraryService,
+
     private citationsService: CitationsService,
     private citationParserService: CitationParserService,
     private citationMetricsService: CitationMetricsService,
@@ -141,7 +140,6 @@ export class PapersService {
       paperId: savedPaper.id,
     }
 
-    await this.libraryService.addToLibrary(userId, addToLibraryDto);
 
     this.logger.log(`\n✅ PAPER CREATED SUCCESSFULLY`);
     this.logger.log(`   Paper ID: ${savedPaper.id}`);
@@ -802,11 +800,6 @@ export class PapersService {
     }
 
     // Remove from user library first
-    try {
-      await this.libraryService.removeFromLibraryByPaperId(userId, id);
-    } catch (error) {
-      // If not in library, that's fine
-    }
 
     // Remove all citations (both citing and cited)
     await this.paperCitationsRepository.delete({ citingPaperId: id });
@@ -1587,4 +1580,129 @@ export class PapersService {
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
   }
+
+  async toggleFavorite(id: number, favorite: boolean, userId: number): Promise<Paper> {
+   
+    const paper = await this.findOne(id);
+    if(!paper) {
+      throw new NotFoundException('Paper not found in library');
+    }
+    if (paper.addedBy !== userId) {
+      throw new ForbiddenException('You can only modify your own papers');
+    }
+    
+    paper.favorite = favorite;
+    return await this.papersRepository.save(paper);
+  }
+
+  // get statistics of paper: status and favorite
+  async getPaperStatusStatistics(userId: number): Promise<{ 
+        byStatus: Record<string, number>;
+    favorites: number;
+    total: number; }> {
+    const baseQuery = this.papersRepository.createQueryBuilder('paper')
+      .where('paper.addedBy = :userId', { userId })
+      .andWhere('paper.isReference = :isReference', { isReference: false });
+
+    const total = await baseQuery.getCount();
+
+    const byStatus: Record<string, number> = {};
+    
+    for (const status of ['to_read', 'reading', 'completed']) {
+      byStatus[status] = await baseQuery
+        .clone()
+        .andWhere('paper.status = :status', { status })
+        .getCount();
+    }
+
+    const favorites = await baseQuery
+      .clone()
+      .andWhere('paper.favorite = true')
+      .getCount();
+    return {
+      byStatus,
+      favorites,
+      total,
+    };
+  }
+
+  // Get library (filtered papers)
+  async getLibrary(userId: number, filters?: {
+    status?: string;
+    favorite?: boolean;
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  }): Promise<{ items: any[]; total: number }> {
+    const { status, favorite, page = 1, pageSize = 10, search } = filters || {};
+
+    const queryBuilder = this.papersRepository
+      .createQueryBuilder('paper')
+      .leftJoinAndSelect('paper.tags', 'tags')
+      .where('paper.addedBy = :userId', { userId })
+      .andWhere('paper.isReference = :isReference', { isReference: false });
+
+    if (status) {
+      queryBuilder.andWhere('paper.status = :status', { status });
+    }
+
+    if (favorite !== undefined) {
+      queryBuilder.andWhere('paper.favorite = :favorite', { favorite });
+    }
+
+    if (search) {
+      queryBuilder.andWhere(
+        '(paper.title LIKE :search OR paper.authors LIKE :search OR paper.abstract LIKE :search)',
+        { search: `%${search}%` }
+      );
+    }
+
+    const total = await queryBuilder.getCount();
+
+    const papers = await queryBuilder
+      .orderBy('paper.createdAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize)
+      .getMany();
+
+    // Transform to match LibraryItem format
+    const items = papers.map(paper => ({
+      id: paper.id,
+      paperId: paper.id,
+      userId: paper.addedBy,
+      addedAt: paper.createdAt,
+      paper: paper,
+    }));
+
+    return { items, total };
+  }
+
+  // Update paper status
+  async updatePaperStatus(paperId: number, userId: number, status: string): Promise<Paper> {
+    const paper = await this.papersRepository.findOne({
+      where: { id: paperId, addedBy: userId },
+      relations: ['tags'],
+    });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    paper.status = status as any;
+    return await this.papersRepository.save(paper);
+  }
+
+  // Remove paper (soft delete by setting isReference or hard delete)
+  async removePaper(paperId: number, userId: number): Promise<void> {
+    const paper = await this.papersRepository.findOne({
+      where: { id: paperId, addedBy: userId },
+    });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    await this.papersRepository.remove(paper);
+  }
+
 }

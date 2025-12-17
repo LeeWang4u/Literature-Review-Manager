@@ -13,7 +13,6 @@ import {
 } from 'typeorm';
 import { User } from '../users/user.entity';
 import { Tag } from '../tags/tag.entity';
-import { UserLibrary } from '../library/user-library.entity';
 import { Note } from '../notes/note.entity';
 import { PdfFile } from '../pdf/pdf-file.entity';
 import { Citation } from '../citations/citation.entity';
@@ -107,8 +106,6 @@ export class Paper {
   })
   tags: Tag[];
 
-  @OneToMany(() => UserLibrary, (library) => library.paper)
-  inLibraries: UserLibrary[];
 
   @OneToMany(() => Note, (note) => note.paper)
   notes: Note[];

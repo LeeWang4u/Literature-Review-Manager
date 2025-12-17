@@ -12,7 +12,6 @@ import {
 } from '@mui/material';
 import {
   Description,
-  LocalLibrary,
   AccountTree,
   TrendingUp,
 } from '@mui/icons-material';
@@ -35,13 +34,6 @@ const DashboardPage: React.FC = () => {
     queryFn: () => libraryService.getStatistics(),
   });
 
-  const { data: libraryCountByStatus } = useQuery({
-    queryKey: ['libraryCountByStatus'],
-    queryFn: () => libraryService.countByStatus(),
-  });
-
-  // console.log('Library Count By Status:', libraryCountByStatus?.to_read);
-
   const isLoading = loadingPaperStats || loadingLibraryStats;
 
   if (isLoading) {
@@ -61,21 +53,21 @@ const DashboardPage: React.FC = () => {
       icon: <Description fontSize="large" color="primary" />,
       color: '#1976d2',
     },
-    {
-      title: 'Library Items',
-      value: libraryStats?.total || 0,
-      icon: <LocalLibrary fontSize="large" color="secondary" />,
-      color: '#dc004e',
-    },
+    // {
+    //   title: 'Library Items',
+    //   value: libraryStats?.total || 0,
+    //   icon: <LocalLibrary fontSize="large" color="secondary" />,
+    //   color: '#dc004e',
+    // },
     {
       title: 'Reading',
-      value: libraryCountByStatus?.reading || 0,
+      value: libraryStats?.byStatus?.reading || 0,
       icon: <TrendingUp fontSize="large" color="success" />,
       color: '#2e7d32',
     },
     {
       title: 'Completed',
-      value: libraryCountByStatus?.completed || 0,
+      value: libraryStats?.byStatus?.completed || 0,
       icon: <AccountTree fontSize="large" color="warning" />,
       color: '#ed6c02',
     },
@@ -112,9 +104,9 @@ const DashboardPage: React.FC = () => {
 
         <Box sx={{ mt: 4 }}> {/* tăng mt tùy ý, ví dụ 6 hoặc 8 */}
           <PieChart
-            to_read={libraryCountByStatus?.to_read || 0}
-            reading={libraryCountByStatus?.reading || 0}
-            completed={libraryCountByStatus?.completed || 0}
+            to_read={libraryStats?.byStatus?.to_read || 0}
+            reading={libraryStats?.byStatus?.reading || 0}
+            completed={libraryStats?.byStatus?.completed || 0}
           />
         </Box>
         <Box sx={{ mt: 4 }}>

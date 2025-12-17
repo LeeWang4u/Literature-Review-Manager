@@ -9,7 +9,6 @@ import {
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { Paper } from '../papers/paper.entity';
-import { UserLibrary } from '../library/user-library.entity';
 import { Note } from '../notes/note.entity';
 import { Citation } from '../citations/citation.entity';
 import { PdfFile } from '../pdf/pdf-file.entity';
@@ -65,6 +64,4 @@ export class User {
   @OneToMany(() => Tag, (tag) => tag.owner)
   tags: Tag[];
 
-  @OneToMany(() => UserLibrary, (library) => library.user)
-  library: UserLibrary[];
 }

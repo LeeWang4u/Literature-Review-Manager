@@ -33,7 +33,6 @@ import {
 } from '@mui/material';
 import {
   Visibility,
-  Delete,
   Edit,
   ArrowBack,
   Star,
@@ -166,17 +165,7 @@ const LibraryPage: React.FC = () => {
     },
   });
 
-  const removeFromLibraryMutation = useMutation({
-    mutationFn: (id: number) => libraryService.removeFromLibrary(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['library'] });
-      queryClient.invalidateQueries({ queryKey: ['library-statistics'] });
-      showSnackbar('Removed from library', 'success');
-    },
-    onError: () => {
-      showSnackbar('Failed to remove from library', 'error');
-    },
-  });
+
 
   const tabs: TabValue[] = useMemo(() => {
     const statusTabs = Object.entries(stats?.byStatus || {}).map(([value, count]) => ({
@@ -201,11 +190,6 @@ const LibraryPage: React.FC = () => {
     setCurrentTab(newValue);
   };
 
-  const handleRemoveFromLibrary = (id: number) => {
-    if (window.confirm('Are you sure you want to remove this paper from your library?')) {
-      removeFromLibraryMutation.mutate(id);
-    }
-  };
 
   const calculateProgress = (item: LibraryItem): number => {
     // Đọc trạng thái từ paper
@@ -368,21 +352,13 @@ const LibraryPage: React.FC = () => {
                         <IconButton
                           size="small"
                           onClick={() =>
-                            toggleFavoriteMutation.mutate({ id: item.id, favorite: !item.paper.favorite })
+                            toggleFavoriteMutation.mutate({ id: item.paper.id, favorite: !item.paper.favorite })
                           }
                         >
                           {item.paper.favorite ? <Star color="warning" fontSize="small" /> : <StarBorder fontSize="small" />}
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Remove from Library">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => handleRemoveFromLibrary(item.id)}
-                        >
-                          <Delete fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      
                     </Box>
                   </CardActions>
                 </Card>
