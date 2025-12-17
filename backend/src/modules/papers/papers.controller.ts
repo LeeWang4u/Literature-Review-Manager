@@ -64,7 +64,7 @@ export class PapersController {
     console.log(`   References found: ${metadata.references?.length || 0}`);
     if (metadata.references && metadata.references.length > 0) {
       console.log(`   First 3 references:`);
-      metadata.references.slice(0, 3).forEach((ref, i) => {
+      metadata.references.forEach((ref, i) => {
         console.log(`     ${i + 1}. ${ref.title?.substring(0, 50)}... (${ref.year || 'no year'})`);
       });
     }

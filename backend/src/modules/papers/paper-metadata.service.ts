@@ -123,6 +123,12 @@ export class PaperMetadataService {
    * Process references from Semantic Scholar API with year extraction from title
    */
   private processReferences(rawReferences: any[]): PaperMetadata['references'] {
+    this.logger.log(`🔍 Processing ${rawReferences.length} raw references...`);
+    const withoutTitle = rawReferences.filter((ref: any) => !ref.title).length;
+    if (withoutTitle > 0) {
+      this.logger.log(`  ⚠️ ${withoutTitle} references without title (will be skipped)`);
+    }
+    
     return rawReferences
       .filter((ref: any) => ref.title)  // Only keep refs with title
       .map((ref: any, index: number) => {
@@ -180,7 +186,10 @@ export class PaperMetadataService {
           doi: ref.externalIds?.DOI || '',
         };
       })
-      .filter(ref => this.isValidReference(ref)); // Apply validation
+      .filter((ref, index) => {
+        const isValid = this.isValidReference(ref, index < 5);
+        return isValid;
+      });
   }
 
   /**
@@ -193,75 +202,81 @@ export class PaperMetadataService {
     const identifiers = this.extractIdentifiers(input);
     const { doi, arxivId, url: inputUrl } = identifiers;
 
-    // Fetch metadata from all available sources
-    const metadataSources: Partial<PaperMetadata>[] = [];
-
+    // Strategy: Try to gather from all available sources, then merge intelligently
+    
+    // === CASE 1: Paper with DOI (published paper) ===
     if (doi) {
+      this.logger.log(`📄 Processing DOI-based paper: ${doi}`);
+      
+      const s2Metadata = await this.fetchFromSemanticScholar(`DOI:${doi}`).catch(() => null);
       const crossrefMetadata = await this.fetchFromCrossref(doi).catch(() => null);
-      if (crossrefMetadata) {
-        metadataSources.push(crossrefMetadata);
-      }
-    }
-
-    // let s2Identifier = doi || (arxivId ? `arXiv:${arxivId}` : inputUrl);
-    // if (s2Identifier) {
-    //   const s2Metadata = await this.fetchFromSemanticScholar(s2Identifier).catch(() => null);
-    //   if (s2Metadata) {
-    //     metadataSources.push(s2Metadata);
-    //   }
-    // }
-
-    let s2Identifier: string | null = null;
-    if (doi) {
-      s2Identifier = `DOI:${doi}`; // Semantic Scholar expects "DOI:..." format
-    } else if (arxivId) {
-      s2Identifier = `ArXiv:${arxivId}`;
-    } else if (inputUrl) {
-      s2Identifier = inputUrl;
-    }
-
-    if (s2Identifier) {
-      // Try Semantic Scholar using preferred identifier (DOI:... or ArXiv:...)
-      let s2Metadata = null;
-      try {
-        s2Metadata = await this.fetchFromSemanticScholar(s2Identifier);
-      } catch (err) {
-        this.logger.warn(`Semantic Scholar lookup failed for ${s2Identifier}: ${err.message}`);
-        // Fallback: if identifier was DOI:..., try without prefix (some APIs accept plain DOI)
-        if (doi && s2Identifier.startsWith('DOI:')) {
-          try {
-            s2Metadata = await this.fetchFromSemanticScholar(doi);
-            this.logger.log(`Semantic Scholar fallback succeeded for plain DOI ${doi}`);
-          } catch (_) {
-            // ignore, keep s2Metadata null
-          }
+      
+      // Merge S2 and CrossRef if we have at least one
+      if (s2Metadata || crossrefMetadata) {
+        const merged = this.mergeS2AndCrossref(s2Metadata, crossrefMetadata);
+        
+        // Validate merged data has required fields
+        if (merged && Object.keys(merged).length > 0 && merged.title && merged.authors) {
+          this.logger.log(`✅ Successfully merged DOI metadata`);
+          return merged as PaperMetadata;
         }
       }
-      if (s2Metadata) {
-        metadataSources.push(s2Metadata);
-      }
+      
+      this.logger.warn(`⚠️ DOI metadata incomplete, will try other sources...`);
     }
 
+    // === CASE 2: Paper with arXiv ID (preprint or paper with arXiv version) ===
     if (arxivId) {
+      this.logger.log(`📑 Processing arXiv-based paper: ${arxivId}`);
+      
       const arxivMetadata = await this.fetchFromArXiv(arxivId).catch(() => null);
-      if (arxivMetadata) {
-        metadataSources.push(arxivMetadata);
+      const s2Metadata = await this.fetchFromSemanticScholar(`ArXiv:${arxivId}`).catch(() => null);
+      
+      // If S2 found a DOI (paper was published after preprint), fetch CrossRef too
+      let crossrefMetadata: Partial<PaperMetadata> | null = null;
+      if (s2Metadata?.doi) {
+        this.logger.log(`📚 S2 found DOI for arXiv paper: ${s2Metadata.doi}`);
+        crossrefMetadata = await this.fetchFromCrossref(s2Metadata.doi).catch(() => null);
       }
+      
+      // Merge strategy: S2+CrossRef first, then merge with arXiv (arXiv preferred for title/authors/abstract/url)
+      let mergedS2CrossRef: Partial<PaperMetadata> = {};
+      if (s2Metadata || crossrefMetadata) {
+        mergedS2CrossRef = this.mergeS2AndCrossref(s2Metadata, crossrefMetadata);
+      }
+      
+      // Final merge with arXiv metadata
+      const finalMerged = this.mergeS2AndArxiv(mergedS2CrossRef, arxivMetadata);
+      
+      // Validate result
+      if (finalMerged && Object.keys(finalMerged).length > 0 && finalMerged.title && finalMerged.authors) {
+        this.logger.log(`✅ Successfully merged arXiv metadata`);
+        return finalMerged as PaperMetadata;
+      }
+      
+      this.logger.warn(`⚠️ ArXiv metadata incomplete, will try other sources...`);
     }
 
-    if (metadataSources.length === 0) {
-      throw new HttpException(
-        'Unable to fetch paper metadata from any source. Please enter details manually.',
-        HttpStatus.NOT_FOUND,
-      );
+    // === CASE 3: URL-only (no DOI or arXiv ID found) ===
+    if (inputUrl) {
+      this.logger.log(`🔗 Processing URL-based paper: ${inputUrl}`);
+      
+      const s2Metadata = await this.fetchFromSemanticScholar(inputUrl).catch(() => null);
+      
+      if (s2Metadata && Object.keys(s2Metadata).length > 0 && s2Metadata.title && s2Metadata.authors) {
+        this.logger.log(`✅ Successfully fetched metadata from URL`);
+        return s2Metadata as PaperMetadata;
+      }
+      
+      this.logger.warn(`⚠️ URL-based fetch failed`);
     }
 
-    // Merge metadata from all sources
-    const mergedMetadata = await this.mergeMetadata(metadataSources, arxivId);
-
-    this.logger.log(`✅ Merged PaperMetadata:\n${JSON.stringify(mergedMetadata, null, 2)}`);
-
-    return mergedMetadata;
+    // === FINAL FALLBACK: No metadata could be retrieved ===
+    this.logger.error(`❌ Failed to fetch metadata from any source for input: ${input}`);
+    throw new HttpException(
+      'Unable to fetch paper metadata from any source. Please check the DOI/URL or enter details manually.',
+      HttpStatus.NOT_FOUND,
+    );
   }
 
   private extractIdentifiers(input: string): { doi: string | null; arxivId: string | null; url: string | null } {
@@ -389,6 +404,12 @@ export class PaperMetadataService {
         },
       });
       console.log('✅ Semantic Scholar response data:', response.data);
+      if(response.data?.externalIds?.ArXiv){
+        response.data.url = `https://arxiv.org/abs/${response.data.externalIds.ArXiv}`;
+      }
+      if(response.data?.externalIds?.DOI){
+        response.data.doi = response.data?.externalIds?.DOI;
+      }
       return this.mapSemanticScholarToMetadata(response.data);
     } catch (err: any) {
       this.logger.warn(`Semantic Scholar request failed for ${identifier}: ${err.response?.status} ${err.response?.statusText || ''}`);
@@ -452,7 +473,7 @@ export class PaperMetadataService {
       keywords: '',
       references: [],
       // provide flag for PDF availability
-      ...(pdfUrl ? { pdfAvailable: true } : { pdfAvailable: false }),
+      // ...(pdfUrl ? { pdfAvailable: true } : { pdfAvailable: false }),
     };
 
     // // Simple XML parsing with regex
@@ -533,26 +554,43 @@ export class PaperMetadataService {
   }
 
   /**
-   * Validate if a reference is meaningful
+   * Validate if a reference is meaningful (RELAXED for maximum coverage)
    */
-  private isValidReference(ref: { title?: string; authors?: string; year?: number; doi?: string }): boolean {
-    if (!ref.title || ref.title.trim().length === 0) return false;
+  private isValidReference(ref: { title?: string; authors?: string; year?: number; doi?: string }, logReason: boolean = false): boolean {
+    // Check 1: Must have title
+    if (!ref.title || ref.title.trim().length === 0) {
+      if (logReason) this.logger.debug(`❌ Rejected: No title`);
+      return false;
+    }
     
-    // Filter out very short titles (likely parse errors)
-    if (ref.title.trim().length < 10) return false;
+    // Check 2: Title too short (reduced from 10 to 5)
+    if (ref.title.trim().length < 5) {
+      if (logReason) this.logger.debug(`❌ Rejected "${ref.title.substring(0, 30)}...": Title < 5 chars`);
+      return false;
+    }
     
-    // Filter out titles that are just numbers
-    if (/^\d+(\.\d+)?$/.test(ref.title.trim())) return false;
+    // Check 3: Title is just numbers
+    if (/^\d+(\.\d+)?$/.test(ref.title.trim())) {
+      if (logReason) this.logger.debug(`❌ Rejected "${ref.title}": Just numbers`);
+      return false;
+    }
     
-    // Filter out titles that start with just numbers and newline
-    if (/^\d+\s*\n/.test(ref.title)) return false;
+    // Check 4: Title is reference number pattern
+    if (/^\[?\d+\]?\s*$/.test(ref.title.trim())) {
+      if (logReason) this.logger.debug(`❌ Rejected "${ref.title}": Reference number pattern`);
+      return false;
+    }
     
-    // Require at least one of: authors, year, or DOI (in addition to title)
+    // RELAXED: Keep all references with valid title (no strict author/year/DOI requirement)
     const hasAuthors = ref.authors && ref.authors.toLowerCase() !== 'unknown' && ref.authors.trim().length > 0;
     const hasYear = ref.year && ref.year > 1900 && ref.year <= new Date().getFullYear() + 1;
     const hasDoi = ref.doi && ref.doi.trim().length > 0;
     
-    return hasAuthors || hasYear || hasDoi;
+    if (!hasAuthors && !hasYear && !hasDoi && logReason) {
+      this.logger.debug(`⚠️ Kept (title only) "${ref.title.substring(0, 50)}...": Missing metadata but title valid`);
+    }
+    
+    return true;
   }
 
   private async parseReferencesFromPdf(pdfBuffer: Buffer): Promise<PaperMetadata['references']> {
@@ -773,6 +811,122 @@ export class PaperMetadataService {
     };
   }
 
+  /**
+   * Merge Semantic Scholar metadata with Crossref metadata.
+   * Use Semantic Scholar values when present (non-empty), otherwise fall back to Crossref.
+   */
+  private mergeS2AndCrossref(
+    s2: Partial<PaperMetadata> | null,
+    cr: Partial<PaperMetadata> | null,
+  ): Partial<PaperMetadata> {
+    const a = s2 || {} as Partial<PaperMetadata>;
+    const b = cr || {} as Partial<PaperMetadata>;
+
+    const result: Partial<Record<keyof PaperMetadata, any>> = {};
+
+    // Simple scalar fields: prefer S2, fallback to Crossref
+    const fields: (keyof PaperMetadata)[] = ['title','authors','abstract','publicationYear','journal','volume','issue','pages','doi','url'];
+    for (const f of fields) {
+      const valS2 = a[f];
+      const valCr = b[f];
+      if (typeof valS2 === 'string') {
+        if ((valS2 as string).trim().length > 0) result[f] = valS2;
+        else if (typeof valCr === 'string' && (valCr as string).trim().length > 0) result[f] = valCr;
+      } else if (valS2 !== undefined && valS2 !== null) {
+        result[f] = valS2;
+      } else if (valCr !== undefined && valCr !== null) {
+        result[f] = valCr;
+      }
+    }
+
+    // Keywords: merge unique, prefer S2 list first
+    const s2Keywords = (a.keywords || '') .toString();
+    const crKeywords = (b.keywords || '') .toString();
+    const kwSet = new Set<string>();
+    if (s2Keywords) s2Keywords.split(/,\s*/).filter(Boolean).forEach(k => kwSet.add(k));
+    if (crKeywords) crKeywords.split(/,\s*/).filter(Boolean).forEach(k => kwSet.add(k));
+    result.keywords = Array.from(kwSet).join(', ');
+
+    // References: prefer S2 references if present, otherwise Crossref
+    if (a.references && a.references.length > 0) {
+      result.references = a.references;
+    } else if (b.references && b.references.length > 0) {
+      result.references = b.references;
+    } else {
+      result.references = [];
+    }
+
+    return result as Partial<PaperMetadata>;
+  }
+
+  /**
+   * Merge Semantic Scholar metadata with arXiv metadata.
+   * Prefer arXiv for `url`, `title`, `authors`, and `abstract` when present;
+   * otherwise fall back to Semantic Scholar values.
+   */
+  private mergeS2AndArxiv(
+    s2: Partial<PaperMetadata> | null,
+    arxiv: Partial<PaperMetadata> | null,
+  ): Partial<PaperMetadata> {
+    const a = s2 || {} as Partial<PaperMetadata>;
+    const b = arxiv || {} as Partial<PaperMetadata>;
+
+    const result: Partial<Record<keyof PaperMetadata, any>> = {};
+
+    // Fields where arXiv should take precedence if present
+    const arxivPreferred: (keyof PaperMetadata)[] = ['url', 'title', 'authors', 'abstract'];
+
+    // All scalar fields to consider
+    const fields: (keyof PaperMetadata)[] = ['title','authors','abstract','publicationYear','journal','volume','issue','pages','doi','url'];
+
+    for (const f of fields) {
+      const valS2 = a[f];
+      const valAr = b[f];
+
+      // If field is one of the arXiv-preferred, pick arXiv when non-empty
+      if (arxivPreferred.includes(f)) {
+        if (typeof valAr === 'string' && valAr.trim().length > 0) {
+          result[f] = valAr;
+          continue;
+        }
+        if (valAr !== undefined && valAr !== null) {
+          result[f] = valAr;
+          continue;
+        }
+        // fallthrough to S2
+      }
+
+      // Default: prefer S2 when present, otherwise arXiv
+      if (typeof valS2 === 'string') {
+        if ((valS2 as string).trim().length > 0) result[f] = valS2;
+        else if (typeof valAr === 'string' && (valAr as string).trim().length > 0) result[f] = valAr;
+      } else if (valS2 !== undefined && valS2 !== null) {
+        result[f] = valS2;
+      } else if (valAr !== undefined && valAr !== null) {
+        result[f] = valAr;
+      }
+    }
+
+    // Keywords: merge unique, prefer arXiv keywords first
+    const arKeywords = (b.keywords || '').toString();
+    const s2Keywords = (a.keywords || '').toString();
+    const kwSet = new Set<string>();
+    if (arKeywords) arKeywords.split(/,\s*/).filter(Boolean).forEach(k => kwSet.add(k));
+    if (s2Keywords) s2Keywords.split(/,\s*/).filter(Boolean).forEach(k => kwSet.add(k));
+    result.keywords = Array.from(kwSet).join(', ');
+
+    // References: prefer Semantic Scholar references (richer), else arXiv
+    if (a.references && a.references.length > 0) {
+      result.references = a.references;
+    } else if (b.references && b.references.length > 0) {
+      result.references = b.references;
+    } else {
+      result.references = [];
+    }
+
+    return result as Partial<PaperMetadata>;
+  }
+
   private mapSemanticScholarToMetadata(data: any): Partial<PaperMetadata> {
     const authors = data.authors
       ?.map((a: any) => a.name)
@@ -831,24 +985,27 @@ export class PaperMetadataService {
       return { ...ref, importanceScore: score };
     });
     
-    // Sort by importance score (highest first)
-    // Phase 1: Select top 50 candidates for initial processing
-    // Phase 2 (in papers.service): Will use graph analysis to narrow to top 20
+    // Sort by importance score and keep MORE references (100 instead of 50)
+
     references = scoredReferences
-      .sort((a: any, b: any) => b.importanceScore - a.importanceScore)
-      .slice(0, 50);  // Top 50 candidates for graph analysis
+      .sort((a: any, b: any) => b.importanceScore - a.importanceScore);
+  
     
-    this.logger.log(`Selected top 50 reference candidates for graph analysis:`);
-    this.logger.log(`  - Influential papers: ${references.filter((r: any) => r.isInfluential).length}`);
-    this.logger.log(`  - Recent papers (≤5 years): ${references.filter((r: any) => r.year && (currentYear - r.year) <= 5).length}`);
-    this.logger.log(`  - With DOI: ${references.filter((r: any) => r.doi).length}`);
-    this.logger.log(`  - Avg initial score: ${(references.reduce((sum: number, r: any) => sum + r.importanceScore, 0) / references.length).toFixed(1)}`);
-    this.logger.log(`  ⚠️  Will be narrowed to top 20 using citation network analysis`);
+
     
-    // Log year distribution
+    this.logger.log(`📊 Reference Selection Summary:`);
+    this.logger.log(`  ✅ Kept: ${references.length} references`);
+ 
+    this.logger.log(`  📈 Quality:`);
+    this.logger.log(`    - Influential: ${references.filter((r: any) => r.isInfluential).length}`);
+    this.logger.log(`    - Recent (≤5yr): ${references.filter((r: any) => r.year && (currentYear - r.year) <= 5).length}`);
+    this.logger.log(`    - With DOI: ${references.filter((r: any) => r.doi).length}`);
+    this.logger.log(`    - With authors: ${references.filter((r: any) => r.authors && r.authors.length > 0).length}`);
+    this.logger.log(`    - Avg score: ${(references.reduce((sum: number, r: any) => sum + r.importanceScore, 0) / references.length).toFixed(1)}`);
+    
     const withYear = references.filter((r: any) => r.year).length;
     const withoutYear = references.length - withYear;
-    this.logger.log(`Reference year stats: ${withYear} with year, ${withoutYear} without year`);
+    this.logger.log(`  📅 Year: ${withYear} with, ${withoutYear} without`);
 
     return {
       title: data.title || '',
