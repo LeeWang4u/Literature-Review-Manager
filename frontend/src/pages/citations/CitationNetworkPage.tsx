@@ -107,11 +107,23 @@ const CitationNetworkPage: React.FC = () => {
     enabled: !!selectedNode && selectedNode.id !== Number(id),
   });
 
-  const { data: network, isLoading } = useQuery({
+  const { data: network, isLoading, error: networkError } = useQuery({
     queryKey: ['citationNetwork', id, depth],
     queryFn: () => citationService.getNetwork(Number(id), depth),
     enabled: !!id,
+    retry: false,
   });
+
+  // Handle network errors with redirect
+  useEffect(() => {
+    if (networkError) {
+      const err = networkError as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Paper not found or you do not have access');
+        navigate('/papers');
+      }
+    }
+  }, [networkError, navigate]);
 
   const { data: references = [] } = useQuery({
     queryKey: ['citations', 'references', id],

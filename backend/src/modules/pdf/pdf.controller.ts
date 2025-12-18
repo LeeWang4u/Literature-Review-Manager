@@ -77,16 +77,16 @@ export class PdfController {
   @Get('paper/:paperId')
   @ApiOperation({ summary: 'Get all PDF files for a paper' })
   @ApiResponse({ status: 200, description: 'Return PDF files list' })
-  findByPaper(@Param('paperId', ParseIntPipe) paperId: number) {
-    return this.pdfService.findByPaper(paperId);
+  findByPaper(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
+    return this.pdfService.findByPaper(paperId, req.user.id);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get PDF file metadata' })
   @ApiResponse({ status: 200, description: 'Return PDF file metadata' })
   @ApiResponse({ status: 404, description: 'PDF file not found' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.pdfService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @Req() req) {
+    return this.pdfService.findOne(id, req.user.id);
   }
 
   @Get('download/:id')
@@ -96,8 +96,9 @@ export class PdfController {
   async downloadPdf(
     @Param('id', ParseIntPipe) id: number,
     @Res({ passthrough: true }) res: Response,
+    @Req() req,
   ) {
-    const { file, filename } = await this.pdfService.downloadPdf(id);
+    const { file, filename } = await this.pdfService.downloadPdf(id, req.user.id);
 
     res.set({
       'Content-Type': 'application/pdf',
@@ -111,7 +112,7 @@ export class PdfController {
   @ApiOperation({ summary: 'Delete a PDF file' })
   @ApiResponse({ status: 200, description: 'PDF deleted successfully' })
   @ApiResponse({ status: 404, description: 'PDF file not found' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.pdfService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @Req() req) {
+    return this.pdfService.remove(id, req.user.id);
   }
 }

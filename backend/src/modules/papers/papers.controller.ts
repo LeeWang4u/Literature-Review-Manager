@@ -158,8 +158,8 @@ export class PapersController {
   @ApiOperation({ summary: 'Get paper by ID' })
   @ApiResponse({ status: 200, description: 'Paper found' })
   @ApiResponse({ status: 404, description: 'Paper not found' })
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    return await this.papersService.findOne(id);
+  async findOne(@Param('id', ParseIntPipe) id: number, @Request() req) {
+    return await this.papersService.findOne(id, req.user.id);
   }
 
   @Put(':id')

@@ -54,6 +54,14 @@ interface PaperFormData {
     authors?: string;
     year?: number;
     doi?: string;
+    url?: string;
+    abstract?: string;
+    venue?: string;
+    citationCount?: number;
+    influentialCitationCount?: number;
+    fieldsOfStudy?: string[];
+    isOpenAccess?: boolean;
+    journal?: string;
   }[];
 }
 
@@ -169,30 +177,6 @@ const PaperFormPage: React.FC = () => {
 
 
 
-  // const createMutation = useMutation({
-  //   mutationFn: (data: CreatePaperData) => paperService.create(data),
-  //   // onSuccess: (response) => {
-  //   //   if (response.success === false) {
-
-  //   //     if (response.data?.id) {
-  //   //       setExistingPaperId(response.data.id);
-  //   //       setOpenDialog(true);
-  //   //     }
-  //   //     return;
-  //   //   }
-  //   //   // Phần success
-  //   //   toast.success(response.message || 'Paper created successfully!');
-  //   onSuccess: () => {
-  //     toast.success('Paper created successfully!');
-  //     queryClient.invalidateQueries({ queryKey: ['papers'] });
-  //     queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-  //     navigate('/papers');
-  //   },
-  //   onError: (error: any) => {  // Handle real errors (network, server crash, etc.)
-  //     toast.error(error.message || 'Failed to create paper');
-  //   },
-  // });
-  // Update paper mutation
   const createMutation = useMutation({
   mutationFn: (data: CreatePaperData) => paperService.create(data),
   onSuccess: () => {
@@ -289,6 +273,13 @@ const PaperFormPage: React.FC = () => {
         authors: ref.authors || undefined,
         year: ref.year || undefined,
         doi: ref.doi || undefined,
+        journal: ref.journal || undefined,
+        url: ref.url || undefined,
+        venue: ref.venue || undefined,
+        citationCount: ref.citationCount || 0,
+        influentialCitationCount: ref.influentialCitationCount || 0,
+        fieldsOfStudy: ref.fieldsOfStudy || [],
+        isOpenAccess: ref.isOpenAccess || false,
       })) || [],
     };
 
@@ -426,11 +417,18 @@ const PaperFormPage: React.FC = () => {
           authors: ref.authors || '',
           year: ref.year || undefined,
           doi: ref.doi || '',
+          url: ref.url || '',
+          abstract: ref.abstract || '',
+          venue: ref.venue || '',
+          citationCount: ref.citationCount || 0,
+          influentialCitationCount: ref.influentialCitationCount || 0,
+          fieldsOfStudy: ref.fieldsOfStudy || [],
+          isOpenAccess: ref.isOpenAccess || false,
         })) || [],
       });
 
       console.log('📝 FORM RESET WITH REFERENCES:', metadata.references?.length || 0);
-
+      console.log('Sample references in form:', metadata.references);
       // Mark metadata as extracted
       setMetadataExtracted(true);
 

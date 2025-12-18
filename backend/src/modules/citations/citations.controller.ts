@@ -45,22 +45,22 @@ export class CitationsController {
   @Get('paper/:paperId')
   @ApiOperation({ summary: 'Get citations for a paper' })
   @ApiResponse({ status: 200, description: 'Return citing and cited papers' })
-  findByPaper(@Param('paperId', ParseIntPipe) paperId: number) {
-    return this.citationsService.findByPaper(paperId);
+  findByPaper(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
+    return this.citationsService.findByPaper(paperId, req.user.id);
   }
 
   @Get('paper/:paperId/references')
   @ApiOperation({ summary: 'Get references (papers this paper cites)' })
   @ApiResponse({ status: 200, description: 'Return list of references with metadata' })
-  getReferences(@Param('paperId', ParseIntPipe) paperId: number) {
-    return this.citationsService.getReferences(paperId);
+  getReferences(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
+    return this.citationsService.getReferences(paperId, req.user.id);
   }
 
   @Get('paper/:paperId/cited-by')
   @ApiOperation({ summary: 'Get citing papers (papers that cite this paper)' })
   @ApiResponse({ status: 200, description: 'Return list of citing papers with metadata' })
-  getCitedBy(@Param('paperId', ParseIntPipe) paperId: number) {
-    return this.citationsService.getCitedBy(paperId);
+  getCitedBy(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
+    return this.citationsService.getCitedBy(paperId, req.user.id);
   }
 
   @Get('network/:paperId')
@@ -70,15 +70,16 @@ export class CitationsController {
   getCitationNetwork(
     @Param('paperId', ParseIntPipe) paperId: number,
     @Query('depth', new DefaultValuePipe(2), ParseIntPipe) depth: number,
+    @Req() req,
   ) {
-    return this.citationsService.getCitationNetwork(paperId, depth);
+    return this.citationsService.getCitationNetwork(paperId, depth, req.user.id);
   }
 
   @Get('stats/:paperId')
   @ApiOperation({ summary: 'Get citation statistics' })
   @ApiResponse({ status: 200, description: 'Return citation counts' })
-  getCitationStats(@Param('paperId', ParseIntPipe) paperId: number) {
-    return this.citationsService.getCitationStats(paperId);
+  getCitationStats(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
+    return this.citationsService.getCitationStats(paperId, req.user.id);
   }
 
   @Patch(':id')

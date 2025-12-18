@@ -34,6 +34,7 @@ import { PdfUploader } from '@/components/pdf/PdfUploader';
 import { PdfViewer } from '@/components/pdf/PdfViewer';
 import { AiSummaryCard } from '@/components/summary/AiSummaryCard';
 import { ChatBox } from '@/components/chat/ChatBox';
+import { Paper as PaperType } from '@/types';
 
 const PaperDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -43,14 +44,23 @@ const PaperDetailPage: React.FC = () => {
 
   const [openPopupDelete, setOpenPopupDelete] = useState(false);
 
-
-
-
-  const { data: paper, isLoading, error } = useQuery({
+  const { data: paper, isLoading, error } = useQuery<PaperType>({
     queryKey: ['paper', id],
     queryFn: () => paperService.getById(Number(id)),
     enabled: !!id,
+    retry: false,
   });
+
+  // Handle errors with redirect
+  useEffect(() => {
+    if (error) {
+      const err = error as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Paper not found or you do not have access to this paper');
+        navigate('/papers');
+      }
+    }
+  }, [error, navigate]);
 
   const [status, setStatus] = useState('to_read');
   const [favorite, setFavorite] = useState(false);
@@ -70,11 +80,23 @@ const PaperDetailPage: React.FC = () => {
   });
 
   // Fetch notes count for this paper
-  const { data: notes = [] } = useQuery({
+  const { data: notes = [], error: notesError } = useQuery({
     queryKey: ['notes', id],
     queryFn: () => noteService.getByPaper(Number(id)),
     enabled: !!id,
+    retry: false,
   });
+
+  // Handle notes errors with redirect
+  useEffect(() => {
+    if (notesError) {
+      const err = notesError as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Unable to load notes - you do not have access to this paper');
+        navigate('/papers');
+      }
+    }
+  }, [notesError, navigate]);
 
 
 
@@ -315,7 +337,7 @@ const PaperDetailPage: React.FC = () => {
               </Typography>
               <Box>
                 {paper.tags && paper.tags.length > 0 ? (
-                  paper.tags.map((tag) => (
+                  paper.tags.map((tag: any) => (
                     <Chip key={tag.id} label={tag.name} sx={{ mr: 1, mb: 1 }} />
                   ))
                 ) : (

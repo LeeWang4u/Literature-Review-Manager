@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -32,18 +32,42 @@ const NotesPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch paper details
-  const { data: paper } = useQuery({
+  const { data: paper, error: paperError } = useQuery({
     queryKey: ['paper', paperId],
     queryFn: () => paperService.getById(Number(paperId)),
     enabled: !!paperId,
+    retry: false,
   });
+
+  // Handle paper errors with redirect
+  useEffect(() => {
+    if (paperError) {
+      const err = paperError as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Paper not found or you do not have access');
+        navigate('/papers');
+      }
+    }
+  }, [paperError, navigate]);
 
   // Fetch notes for the paper
   const { data: notes = [], isLoading, error } = useQuery({
     queryKey: ['notes', paperId],
     queryFn: () => noteService.getByPaper(Number(paperId)),
     enabled: !!paperId,
+    retry: false,
   });
+
+  // Handle notes errors with redirect
+  useEffect(() => {
+    if (error) {
+      const err = error as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        toast.error('Notes not accessible - you do not have access to this paper');
+        navigate('/papers');
+      }
+    }
+  }, [error, navigate]);
 
   // Create note mutation
   const createMutation = useMutation({

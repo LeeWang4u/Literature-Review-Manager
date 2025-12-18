@@ -73,14 +73,19 @@ export class CitationsService {
     return await this.citationsRepository.save(citation);
   }
 
-  async findByPaper(paperId: number) {
-    // Verify paper exists
+  async findByPaper(paperId: number, userId?: number) {
+    // Verify paper exists and user owns it
     const paper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!paper) {
       throw new NotFoundException('Paper not found');
+    }
+
+    // Check ownership
+    if (userId && paper.addedBy !== userId) {
+      throw new NotFoundException('Paper not found or you do not have access');
     }
 
     // Papers that cite this paper
@@ -101,14 +106,19 @@ export class CitationsService {
     };
   }
 
-  async getCitationNetwork(paperId: number, depth: number = 2) {
-    // Verify paper exists
+  async getCitationNetwork(paperId: number, depth: number = 2, userId?: number) {
+    // Verify paper exists and user owns it
     const rootPaper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!rootPaper) {
       throw new NotFoundException('Paper not found');
+    }
+
+    // Check ownership
+    if (userId && rootPaper.addedBy !== userId) {
+      throw new NotFoundException('Paper not found or you do not have access');
     }
 
     const visited = new Set<number>();
@@ -288,14 +298,19 @@ export class CitationsService {
     };
   }
 
-  async getCitationStats(paperId: number) {
-    // Verify paper exists
+  async getCitationStats(paperId: number, userId?: number) {
+    // Verify paper exists and user owns it
     const paper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!paper) {
       throw new NotFoundException('Paper not found');
+    }
+
+    // Check ownership
+    if (userId && paper.addedBy !== userId) {
+      throw new NotFoundException('Paper not found or you do not have access');
     }
 
     const citedByCount = await this.citationsRepository.count({
@@ -312,14 +327,19 @@ export class CitationsService {
     };
   }
 
-  async getReferences(paperId: number): Promise<Citation[]> {
-    // Verify paper exists
+  async getReferences(paperId: number, userId?: number): Promise<Citation[]> {
+    // Verify paper exists and user owns it
     const paper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!paper) {
       throw new NotFoundException('Paper not found');
+    }
+
+    // Check ownership
+    if (userId && paper.addedBy !== userId) {
+      throw new NotFoundException('Paper not found or you do not have access');
     }
 
     // Get papers cited by this paper (references)
@@ -333,14 +353,19 @@ export class CitationsService {
     });
   }
 
-  async getCitedBy(paperId: number): Promise<Citation[]> {
-    // Verify paper exists
+  async getCitedBy(paperId: number, userId?: number): Promise<Citation[]> {
+    // Verify paper exists and user owns it
     const paper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!paper) {
       throw new NotFoundException('Paper not found');
+    }
+
+    // Check ownership
+    if (userId && paper.addedBy !== userId) {
+      throw new NotFoundException('Paper not found or you do not have access');
     }
 
     // Get papers that cite this paper

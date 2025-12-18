@@ -7,6 +7,7 @@ import axios from 'axios';
 import * as pdfParse from 'pdf-parse';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { CitationParserService } from '../citations/citation-parser.service';
+import { url } from 'inspector';
 
 export interface PaperMetadata {
   title: string;
@@ -120,78 +121,206 @@ export class PaperMetadataService {
   }
 
   /**
-   * Process references from Semantic Scholar API with year extraction from title
+   * Extract Semantic Scholar paper ID from URL
+   * Supports multiple URL formats:
+   * - https://www.semanticscholar.org/paper/{title}/{authors}/{paperId}
+   * - https://www.semanticscholar.org/paper/{paperId}
    */
-  private processReferences(rawReferences: any[]): PaperMetadata['references'] {
-    this.logger.log(`🔍 Processing ${rawReferences.length} raw references...`);
-    const withoutTitle = rawReferences.filter((ref: any) => !ref.title).length;
-    if (withoutTitle > 0) {
-      this.logger.log(`  ⚠️ ${withoutTitle} references without title (will be skipped)`);
+  extractS2PaperId(url: string): string | null {
+    if (!url) return null;
+    
+    // Pattern: Extract 40-character hex string (Semantic Scholar paper ID)
+    // Matches both long URLs with title/authors and short URLs with just ID
+    const s2Pattern = /semanticscholar\.org\/paper\/(?:.*\/)?([a-f0-9]{40})(?:[#?].*)?$/i;
+    const match = url.match(s2Pattern);
+    
+    if (match) {
+      this.logger.debug(`Extracted S2 Paper ID: ${match[1]} from URL: ${url}`);
+      return match[1];
     }
     
-    return rawReferences
-      .filter((ref: any) => ref.title)  // Only keep refs with title
-      .map((ref: any, index: number) => {
-        let year = ref.year;
-
-        // If year is not provided, try to extract from title
-        if (!year && ref.title) {
-          const currentYear = new Date().getFullYear();
-          const minYear = 1900;
-          const maxYear = currentYear + 1;
-
-          // Try multiple patterns to extract year:
-          // 1. (2021) - year in parentheses
-          // 2. [2021] - year in square brackets  
-          // 3. 2021. or 2021, - year followed by punctuation
-          // 4. Standalone 4-digit number that looks like a year
-          const patterns = [
-            /\((\d{4})\)/g,           // (2021)
-            /\[(\d{4})\]/g,           // [2021]
-            /\b(\d{4})[.,;]\s/g,      // 2021. or 2021, followed by space
-            /\b(19\d{2}|20\d{2})\b/g, // Any year 1900-2099
-          ];
-
-          let extractedYear: number | null = null;
-
-          for (const pattern of patterns) {
-            const matches = Array.from(ref.title.matchAll(pattern));
-            if (matches.length > 0) {
-              // Take the last match (usually the publication year)
-              const lastMatch = matches[matches.length - 1];
-              const yearNum = parseInt(lastMatch[1]);
-
-              // Validate year is reasonable
-              if (yearNum >= minYear && yearNum <= maxYear) {
-                extractedYear = yearNum;
-                if (index < 3) {
-                  this.logger.log(`  Extracted year ${yearNum} from pattern ${pattern} in: "${ref.title.substring(0, 60)}..."`);
-                }
-                break; // Use first successful pattern
-              }
-            }
-          }
-
-          if (extractedYear) {
-            year = extractedYear;
-          } else if (index < 3) {
-            this.logger.log(`  No valid year found in: "${ref.title.substring(0, 60)}..."`);
-          }
-        }
-
-        return {
-          title: ref.title || '',
-          authors: ref.authors?.map((a: any) => a.name).filter((name: string) => name?.length > 0).join(', ') || '',
-          year: year,
-          doi: ref.externalIds?.DOI || '',
-        };
-      })
-      .filter((ref, index) => {
-        const isValid = this.isValidReference(ref, index < 5);
-        return isValid;
-      });
+    return null;
   }
 
+  /**
+   * Process references from Semantic Scholar API with year extraction from title
+   */
+  // private processReferences(rawReferences: any[]): PaperMetadata['references'] {
+  //   this.logger.log(`🔍 Processing ${rawReferences.length} raw references...`);
+  //   const withoutTitle = rawReferences.filter((ref: any) => !ref.title).length;
+  //   if (withoutTitle > 0) {
+  //     this.logger.log(`  ⚠️ ${withoutTitle} references without title (will be skipped)`);
+  //   }
+    
+  //   return rawReferences
+  //     .filter((ref: any) => ref.title)  // Only keep refs with title
+  //     .map((ref: any, index: number) => {
+  //       let year = ref.year;
+
+  //       // If year is not provided, try to extract from title
+  //       if (!year && ref.title) {
+  //         const currentYear = new Date().getFullYear();
+  //         const minYear = 1900;
+  //         const maxYear = currentYear + 1;
+
+  //         // Try multiple patterns to extract year:
+  //         // 1. (2021) - year in parentheses
+  //         // 2. [2021] - year in square brackets  
+  //         // 3. 2021. or 2021, - year followed by punctuation
+  //         // 4. Standalone 4-digit number that looks like a year
+  //         const patterns = [
+  //           /\((\d{4})\)/g,           // (2021)
+  //           /\[(\d{4})\]/g,           // [2021]
+  //           /\b(\d{4})[.,;]\s/g,      // 2021. or 2021, followed by space
+  //           /\b(19\d{2}|20\d{2})\b/g, // Any year 1900-2099
+  //         ];
+
+  //         let extractedYear: number | null = null;
+
+  //         for (const pattern of patterns) {
+  //           const matches = Array.from(ref.title.matchAll(pattern));
+  //           if (matches.length > 0) {
+  //             // Take the last match (usually the publication year)
+  //             const lastMatch = matches[matches.length - 1];
+  //             const yearNum = parseInt(lastMatch[1]);
+
+  //             // Validate year is reasonable
+  //             if (yearNum >= minYear && yearNum <= maxYear) {
+  //               extractedYear = yearNum;
+  //               if (index < 3) {
+  //                 this.logger.log(`  Extracted year ${yearNum} from pattern ${pattern} in: "${ref.title.substring(0, 60)}..."`);
+  //               }
+  //               break; // Use first successful pattern
+  //             }
+  //           }
+  //         }
+
+  //         if (extractedYear) {
+  //           year = extractedYear;
+  //         } else if (index < 3) {
+  //           this.logger.log(`  No valid year found in: "${ref.title.substring(0, 60)}..."`);
+  //         }
+  //       }
+
+  //       return {
+  //         title: ref.title || '',
+  //         authors: ref.authors?.map((a: any) => a.name).filter((name: string) => name?.length > 0).join(', ') || '',
+  //         year: year,
+  //         doi: ref.externalIds?.DOI || '',
+  //       };
+  //     })
+  //     .filter((ref, index) => {
+  //       const isValid = this.isValidReference(ref, index < 5);
+  //       return isValid;
+  //     });
+  // }
+
+  private processReferences(rawReferences: any[]): PaperMetadata['references'] {
+    this.logger.log(`🔍 Processing ${rawReferences.length} raw references...`);
+
+    // 1. Lọc sơ bộ
+    const validRefs = rawReferences.filter((ref: any) => ref && ref.title);
+    const skippedCount = rawReferences.length - validRefs.length;
+    
+    if (skippedCount > 0) {
+      this.logger.warn(`⚠️ Skipped ${skippedCount} references due to missing title.`);
+    }
+
+    return validRefs
+      .map((ref: any) => {
+        // A. Xử lý Authors: Chuyển array object -> string "Name 1, Name 2"
+        const authors = Array.isArray(ref.authors)
+          ? ref.authors
+              .map((a: any) => a.name)
+              .filter((n: any) => typeof n === 'string' && n.length > 0)
+              .join(', ')
+          : '';
+
+        // B. Xử lý Năm: Ưu tiên field 'year' có sẵn, nếu không mới dùng Regex title
+        let year = ref.year;
+        // if (!year) {
+        //   year = this.extractYearFromTitle(ref.title);
+        // }
+        let url = ref.url;
+
+        const arXivId = ref.externalIds?.ArXiv;
+        if ( arXivId) {
+          url = `https://arxiv.org/abs/${arXivId}`;
+        }
+
+        // C. Xử lý Open Access: Check object openAccessPdf hoặc field isOpenAccess
+        const isOpenAccess = !!(ref.openAccessPdf || ref.isOpenAccess);
+
+        // D. Mapping đầy đủ vào Interface
+        return {
+          title: ref.title,
+          authors: authors,
+          year: year,
+          doi: ref.externalIds?.DOI || '',
+          url: url || '',
+ 
+          
+          // Các trường bổ sung từ JSON mẫu của bạn:
+          abstract: ref.abstract || '', 
+          venue: ref.venue || '', // VD: "Oxford Open Energy"
+          citationCount: ref.citationCount || 0,
+          influentialCitationCount: ref.influentialCitationCount || 0,
+          
+          // Semantic Scholar trả về array string cho fieldsOfStudy (VD: ["Computer Science"])
+          fieldsOfStudy: Array.isArray(ref.fieldsOfStudy) ? ref.fieldsOfStudy : [],
+          
+          isOpenAccess: isOpenAccess,
+          
+          // Đánh dấu để biết đây là data giàu thông tin
+          enriched: !!(ref.abstract || ref.citationCount > 0), 
+          enrichmentMethod: 'S2_DIRECT_API'
+        };
+      })
+      // Filter cuối cùng: Dùng hàm validate của bạn (check year, title length...)
+      .filter((ref, index) => this.isValidReference(ref, index < 5));
+  }
+
+  /**
+   * Helper: Trích xuất năm từ Title (Chỉ chạy khi field year bị null)
+   */
+  private extractYearFromTitle(title: string): number | undefined {
+    if (!title) return undefined;
+
+    const currentYear = new Date().getFullYear();
+    const minYear = 1900;
+    const maxYear = currentYear + 1; // Cho phép năm sau (bài báo pre-print)
+
+    // --- CHIẾN LƯỢC 1: Tìm ngay đầu chuỗi (Độ tin cậy cao nhất) ---
+    // Pattern: Bắt đầu bằng (tùy chọn ngoặc), sau đó là năm, sau đó là dấu chấm/phẩy/ngoặc/khoảng trắng
+    // Ví dụ match: "2024. Title", "(2024) Title", "[2024] Title", "2024: Title"
+    const startRegex = /^[\s\(\[]*(19\d{2}|20\d{2})[\)\].:,-]\s/;
+    
+    const startMatch = title.match(startRegex);
+    if (startMatch) {
+      const yearStart = parseInt(startMatch[1], 10);
+      if (yearStart >= minYear && yearStart <= maxYear) {
+        return yearStart; // Trả về ngay, không cần quét tiếp
+      }
+    }
+
+    // --- CHIẾN LƯỢC 2: Quét toàn bộ chuỗi (Fallback) ---
+    // Dùng \b để bắt boundary, tránh số 20245
+    const globalRegex = /\b(19\d{2}|20\d{2})\b/g;
+    const matches = Array.from(title.matchAll(globalRegex));
+
+    if (matches.length > 0) {
+      // Logic cũ: Lấy năm cuối cùng tìm thấy (thường là năm xuất bản đặt cuối title)
+      // Ví dụ: "Understanding AI (2023)"
+      const lastMatch = matches[matches.length - 1];
+      const yearGlobal = parseInt(lastMatch[0], 10);
+      
+      if (yearGlobal >= minYear && yearGlobal <= maxYear) {
+        return yearGlobal;
+      }
+    }
+
+    return undefined;
+  }
   /**
    * Extract metadata from DOI or URL, fetching from multiple sources and merging results for completeness.
    */
@@ -200,9 +329,34 @@ export class PaperMetadataService {
 
     // Extract all possible identifiers
     const identifiers = this.extractIdentifiers(input);
-    const { doi, arxivId, url: inputUrl } = identifiers;
+    const { doi, arxivId, s2PaperId, url: inputUrl } = identifiers;
 
     // Strategy: Try to gather from all available sources, then merge intelligently
+    
+    // === CASE 0: Direct Semantic Scholar Paper ID (most direct) ===
+    if (s2PaperId) {
+      this.logger.log(`📘 Processing Semantic Scholar paper ID: ${s2PaperId}`);
+      
+      const s2Metadata = await this.fetchFromSemanticScholar(s2PaperId).catch(() => null);
+      
+      if (s2Metadata && Object.keys(s2Metadata).length > 0 && s2Metadata.title && s2Metadata.authors) {
+        // If S2 has a DOI, also fetch from CrossRef for completeness
+        let crossrefMetadata: Partial<PaperMetadata> | null = null;
+        if (s2Metadata.doi) {
+          this.logger.log(`📚 S2 paper has DOI: ${s2Metadata.doi}, fetching from CrossRef...`);
+          crossrefMetadata = await this.fetchFromCrossref(s2Metadata.doi).catch(() => null);
+        }
+        
+        const merged = this.mergeS2AndCrossref(s2Metadata, crossrefMetadata);
+        
+        if (merged && Object.keys(merged).length > 0 && merged.title && merged.authors) {
+          this.logger.log(`✅ Successfully fetched metadata from Semantic Scholar paper ID`);
+          return merged as PaperMetadata;
+        }
+      }
+      
+      this.logger.warn(`⚠️ Semantic Scholar paper ID metadata incomplete, will try other sources...`);
+    }
     
     // === CASE 1: Paper with DOI (published paper) ===
     if (doi) {
@@ -212,7 +366,7 @@ export class PaperMetadataService {
       const crossrefMetadata = await this.fetchFromCrossref(doi).catch(() => null);
       
       // Merge S2 and CrossRef if we have at least one
-      if (s2Metadata || crossrefMetadata) {
+      if ((s2Metadata || crossrefMetadata) && !s2Metadata?.doi) {
         const merged = this.mergeS2AndCrossref(s2Metadata, crossrefMetadata);
         
         // Validate merged data has required fields
@@ -279,9 +433,10 @@ export class PaperMetadataService {
     );
   }
 
-  private extractIdentifiers(input: string): { doi: string | null; arxivId: string | null; url: string | null } {
+  private extractIdentifiers(input: string): { doi: string | null; arxivId: string | null; s2PaperId: string | null; url: string | null } {
     let doi = null;
     let arxivId = null;
+    let s2PaperId = null;
     let url = null;
 
     const type = this.detectInputType(input);
@@ -294,13 +449,15 @@ export class PaperMetadataService {
         doi = doiMatch[1];
       }
       arxivId = this.extractArxivId(input);
+      s2PaperId = this.extractS2PaperId(input);
     } else {
       // Try to extract anyway
       doi = this.extractDOI(input);
       arxivId = this.extractArxivId(input);
+      s2PaperId = this.extractS2PaperId(input);
     }
 
-    return { doi, arxivId, url };
+    return { doi, arxivId, s2PaperId, url };
   }
 
   private async fetchFromCrossref(doi: string): Promise<Partial<PaperMetadata>> {
@@ -383,15 +540,12 @@ export class PaperMetadataService {
 
   private async fetchFromSemanticScholar(identifier: string): Promise<Partial<PaperMetadata>> {
     this.logger.log(`Fetching from Semantic Scholar: ${identifier}`);
-    const fields = 'title,authors,abstract,year,venue,externalIds,url,fieldsOfStudy,paperId,references.title,references.authors,references.year,references.externalIds,references.paperId';
-    // const response = await axios.get(`${this.semanticScholarBaseUrl}/${identifier}`, {
-    //   params: { fields },
-    //   timeout: 15000,  // Increased timeout for reference fetching
-    //   headers: {
-    //     'User-Agent': 'LiteratureReviewApp/1.0',
-    //     ...this.getSemanticScholarHeaders(),
-    //   },
-    // });
+    // const fields = 'title,authors,abstract,year,venue,externalIds,url,fieldsOfStudy,paperId,references.title,references.authors,references.year,references.externalIds,references.paperId';
+    const fields = 'title,authors,abstract,year,venue,externalIds,influentialCitationCount,citationCount,url,' +
+    'fieldsOfStudy,paperId,references.title,references.authors,references.year,references.externalIds,'+
+    'references.paperId,references.url,references.abstract,references.citationCount,'+
+    'references.influentialCitationCount,references.venue';
+
 
     const encodedId = encodeURIComponent(identifier);
     try {
@@ -556,40 +710,104 @@ export class PaperMetadataService {
   /**
    * Validate if a reference is meaningful (RELAXED for maximum coverage)
    */
-  private isValidReference(ref: { title?: string; authors?: string; year?: number; doi?: string }, logReason: boolean = false): boolean {
-    // Check 1: Must have title
-    if (!ref.title || ref.title.trim().length === 0) {
-      if (logReason) this.logger.debug(`❌ Rejected: No title`);
+  // private isValidReference(ref: { title?: string; authors?: string; year?: number; doi?: string }, logReason: boolean = false): boolean {
+  //   // Check 1: Must have title
+  //   if (!ref.title || ref.title.trim().length === 0) {
+  //     if (logReason) this.logger.debug(`❌ Rejected: No title`);
+  //     return false;
+  //   }
+    
+  //   // Check 2: Title too short (reduced from 10 to 5)
+  //   if (ref.title.trim().length < 5) {
+  //     if (logReason) this.logger.debug(`❌ Rejected "${ref.title.substring(0, 30)}...": Title < 5 chars`);
+  //     return false;
+  //   }
+    
+  //   // Check 3: Title is just numbers
+  //   if (/^\d+(\.\d+)?$/.test(ref.title.trim())) {
+  //     if (logReason) this.logger.debug(`❌ Rejected "${ref.title}": Just numbers`);
+  //     return false;
+  //   }
+    
+  //   // Check 4: Title is reference number pattern
+  //   if (/^\[?\d+\]?\s*$/.test(ref.title.trim())) {
+  //     if (logReason) this.logger.debug(`❌ Rejected "${ref.title}": Reference number pattern`);
+  //     return false;
+  //   }
+    
+  //   // RELAXED: Keep all references with valid title (no strict author/year/DOI requirement)
+  //   const hasAuthors = ref.authors && ref.authors.toLowerCase() !== 'unknown' && ref.authors.trim().length > 0;
+  //   const hasYear = ref.year && ref.year > 1900 && ref.year <= new Date().getFullYear() + 1;
+  //   const hasDoi = ref.doi && ref.doi.trim().length > 0;
+    
+  //   if (!hasAuthors && !hasYear && !hasDoi && logReason) {
+  //     this.logger.debug(`⚠️ Kept (title only) "${ref.title.substring(0, 50)}...": Missing metadata but title valid`);
+  //   }
+    
+  //   return true;
+  // }
+
+  /**
+   * Validate reference quality
+   * Updated to handle rich metadata from Semantic Scholar
+   */
+  private isValidReference(ref: any, logReason: boolean = false): boolean {
+    // 1. Check Title Existence
+    if (!ref.title || typeof ref.title !== 'string' || ref.title.trim().length === 0) {
+      if (logReason) this.logger.debug(`❌ Rejected: No title or invalid title type`);
       return false;
     }
-    
-    // Check 2: Title too short (reduced from 10 to 5)
-    if (ref.title.trim().length < 5) {
-      if (logReason) this.logger.debug(`❌ Rejected "${ref.title.substring(0, 30)}...": Title < 5 chars`);
+
+    const cleanTitle = ref.title.trim();
+    const lowerTitle = cleanTitle.toLowerCase();
+
+    // 2. Check Title Length (Too short = likely garbage)
+    if (cleanTitle.length < 5) {
+      if (logReason) this.logger.debug(`❌ Rejected "${cleanTitle}": Title too short (< 5 chars)`);
       return false;
     }
-    
-    // Check 3: Title is just numbers
-    if (/^\d+(\.\d+)?$/.test(ref.title.trim())) {
-      if (logReason) this.logger.debug(`❌ Rejected "${ref.title}": Just numbers`);
+
+    // 3. Check for Numeric Titles (e.g., "12345", "1.2")
+    if (/^\d+(\.\d+)?$/.test(cleanTitle)) {
+      if (logReason) this.logger.debug(`❌ Rejected "${cleanTitle}": Just numbers`);
       return false;
     }
-    
-    // Check 4: Title is reference number pattern
-    if (/^\[?\d+\]?\s*$/.test(ref.title.trim())) {
-      if (logReason) this.logger.debug(`❌ Rejected "${ref.title}": Reference number pattern`);
+
+    // 4. Check for Reference Markers (e.g., "[1]", "(12)")
+    if (/^\[?\(?\d+\)?\]?\.?$/.test(cleanTitle)) {
+      if (logReason) this.logger.debug(`❌ Rejected "${cleanTitle}": Reference number pattern`);
       return false;
     }
+
+    // 5. [NEW] Check for Common Section Headers (PDF Parsing Artifacts)
+    // Semantic Scholar often mistakes headers for references
+    const invalidHeaders = [
+      'introduction', 'abstract', 'references', 'bibliography', 
+      'conclusion', 'methodology', 'results', 'discussion', 
+      'table of contents', 'acknowledgments'
+    ];
     
-    // RELAXED: Keep all references with valid title (no strict author/year/DOI requirement)
-    const hasAuthors = ref.authors && ref.authors.toLowerCase() !== 'unknown' && ref.authors.trim().length > 0;
-    const hasYear = ref.year && ref.year > 1900 && ref.year <= new Date().getFullYear() + 1;
-    const hasDoi = ref.doi && ref.doi.trim().length > 0;
-    
-    if (!hasAuthors && !hasYear && !hasDoi && logReason) {
-      this.logger.debug(`⚠️ Kept (title only) "${ref.title.substring(0, 50)}...": Missing metadata but title valid`);
+    // Check exact match or generic "Table X", "Figure Y"
+    if (invalidHeaders.includes(lowerTitle) || 
+        /^(figure|table|chart|graph)\s+\d+/.test(lowerTitle)) {
+      if (logReason) this.logger.debug(`❌ Rejected "${cleanTitle}": Looks like a section header or caption`);
+      return false;
     }
-    
+
+    // 6. Metadata Health Check (Relaxed Mode)
+    // We accept the reference if it has a valid title, but we log its "health"
+    const hasAuthors = ref.authors && ref.authors.length > 0 && ref.authors.toLowerCase() !== 'unknown';
+    const hasYear = ref.year && ref.year > 1900;
+    const hasDoi = ref.doi && ref.doi.length > 0;
+    const hasAbstract = ref.abstract && ref.abstract.length > 10; // New check
+
+    // Nếu thiếu TẤT CẢ các thông tin quan trọng khác, log cảnh báo (nhưng vẫn giữ lại theo logic của bạn)
+    if (!hasAuthors && !hasYear && !hasDoi && !hasAbstract) {
+      if (logReason) {
+        this.logger.debug(`⚠️ Weak Reference Kept: "${cleanTitle.substring(0, 40)}..." (Valid title, but missing Author/Year/DOI/Abstract)`);
+      }
+    }
+
     return true;
   }
 
@@ -991,11 +1209,8 @@ export class PaperMetadataService {
       .sort((a: any, b: any) => b.importanceScore - a.importanceScore);
   
     
-
-    
     this.logger.log(`📊 Reference Selection Summary:`);
     this.logger.log(`  ✅ Kept: ${references.length} references`);
- 
     this.logger.log(`  📈 Quality:`);
     this.logger.log(`    - Influential: ${references.filter((r: any) => r.isInfluential).length}`);
     this.logger.log(`    - Recent (≤5yr): ${references.filter((r: any) => r.year && (currentYear - r.year) <= 5).length}`);

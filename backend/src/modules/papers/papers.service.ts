@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger, Inject, forwardRef, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { Paper } from './paper.entity';
@@ -75,26 +75,34 @@ export class PapersService {
     } else {
       this.logger.log(`\n📚 REFERENCES: None provided`);
     }
+    console.log(`references extracted`, references);
 
-    const whereConditions = [];
+    // Check for duplicate DOI or URL in user's papers (excluding reference papers)
     if (paperData.doi) {
-      whereConditions.push({ doi: paperData.doi, addedBy: userId, isReference: false });
+      const existingByDoi = await this.papersRepository.findOne({
+        where: {
+          doi: paperData.doi,
+          addedBy: userId,
+          isReference: false,
+        },
+      });
+      
+      if (existingByDoi) {
+        throw new ConflictException('A paper with this DOI already exists in your library');
+      }
     }
+
     if (paperData.url) {
-      whereConditions.push({ url: paperData.url, addedBy: userId, isReference: false });
-    }
-    if (whereConditions.length > 0) {
-      const existingPaper = await this.papersRepository.findOne({ where: whereConditions });
-      if (existingPaper) {
-        throw new HttpException(
-          {
-            success: false,
-            message: 'Bài báo này đã tồn tại trong thư viện của bạn.',
-            status: HttpStatus.CONFLICT,
-            data: { id: existingPaper.id },
-          },
-          HttpStatus.CONFLICT, // 409
-        );
+      const existingByUrl = await this.papersRepository.findOne({
+        where: {
+          url: paperData.url,
+          addedBy: userId,
+          isReference: false,
+        },
+      });
+      
+      if (existingByUrl) {
+        throw new ConflictException('A paper with this URL already exists in your library');
       }
     }
 
@@ -149,7 +157,7 @@ export class PapersService {
     return {
       success: true,
       message: 'Paper created successfully. References are being processed in background.',
-      data: await this.findOne(savedPaper.id)
+      data: await this.findOne(savedPaper.id, userId)
     };
   }
 
@@ -260,15 +268,15 @@ export class PapersService {
       }
       
       // Strategy 2: Fallback to title search if DOI failed or unavailable
-      if (!s2Data && ref.title) {
-        try {
-          s2Data = await this.paperMetadataService.fetchSemanticScholarMetadata(ref.title);
-          enrichmentMethod = 'title';
-          this.logger.debug(`✅ Enriched via title: "${ref.title.substring(0, 40)}..."`);
-        } catch (titleError) {
-          this.logger.debug(`Title lookup failed: ${titleError.message}`);
-        }
-      }
+      // if (!s2Data && ref.title) {
+      //   try {
+      //     s2Data = await this.paperMetadataService.fetchSemanticScholarMetadata(ref.title);
+      //     enrichmentMethod = 'title';
+      //     this.logger.debug(`✅ Enriched via title: "${ref.title.substring(0, 40)}..."`);
+      //   } catch (titleError) {
+      //     this.logger.debug(`Title lookup failed: ${titleError.message}`);
+      //   }
+      // }
       
       // If enrichment succeeded, merge data
       if (s2Data) {
@@ -309,64 +317,88 @@ export class PapersService {
   /**
    * Calculate advanced priority score for reference
    */
-  private calculatePriorityScore(ref: any, mainPaperTitle: string): number {
-    let score = 0;
 
-    // 1. Citation Count (0-30 points) - highly cited = more important
-    if (ref.citationCount) {
-      if (ref.citationCount >= 1000) score += 30;
-      else if (ref.citationCount >= 500) score += 25;
-      else if (ref.citationCount >= 100) score += 20;
-      else if (ref.citationCount >= 50) score += 15;
-      else if (ref.citationCount >= 10) score += 10;
-      else score += 5;
-    }
 
-    // 2. Influential Citation Count (0-20 points)
-    if (ref.influentialCitationCount) {
-      if (ref.influentialCitationCount >= 100) score += 20;
-      else if (ref.influentialCitationCount >= 50) score += 15;
-      else if (ref.influentialCitationCount >= 10) score += 10;
-      else score += 5;
-    }
+  private calculatePriorityScore = (ref: any): number => {
+  let score = 0;
 
-    // 3. Publication Year (0-20 points) - prefer recent papers
-    if (ref.year) {
-      const currentYear = new Date().getFullYear();
-      const age = currentYear - ref.year;
-      if (age <= 2) score += 20;
-      else if (age <= 5) score += 15;
-      else if (age <= 10) score += 10;
-      else if (age <= 20) score += 5;
-    }
+  // -----------------------------------------------------------
+  // 1. IMPACT SCORE (Tối đa 50 điểm) - QUAN TRỌNG NHẤT
+  // -----------------------------------------------------------
+  // Sử dụng Logarit để chấm điểm.
+  // Lý do: Sự khác biệt giữa 0 và 100 citation quan trọng hơn sự khác biệt giữa 1000 và 1100.
+  // Mốc chuẩn (Benchmark): 1000 citations = Đạt điểm tối đa phần citation thường.
+  
+  const citations = ref.citationCount || 0;
+  const influential = ref.influentialCitationCount || 0;
 
-    // 4. Venue Quality (0-15 points) - top venues are more important
-    if (ref.venue) {
-      const topVenues = [
-        'nature', 'science', 'cell', 'lancet', 'jama',
-        'neurips', 'icml', 'iclr', 'cvpr', 'iccv', 'eccv', 'acl', 'emnlp',
-        'sigir', 'kdd', 'www', 'chi', 'usenix', 'osdi', 'sosp'
-      ];
-      const venueLower = ref.venue.toLowerCase();
-      if (topVenues.some(v => venueLower.includes(v))) {
-        score += 15;
-      } else {
-        score += 5; // Any published venue gets some points
-      }
-    }
+  // a. Điểm Citation cơ bản (Max 35 điểm)
+  // log10(1000) = 3. Do đó chia cho 3 để chuẩn hóa về 0-1, rồi nhân 35.
+  const rawCiteScore = Math.log10(citations + 1); 
+  const normalizedCiteScore = Math.min(1, rawCiteScore / 3); 
+  score += normalizedCiteScore * 35;
 
-    // 5. Has DOI (0-10 points) - downloadable
-    if (ref.doi && ref.doi.trim() !== '') {
+  // b. Điểm Influential Citation (Max 15 điểm)
+  // Influential citations là "phiếu bầu chất lượng cao".
+  // Mốc chuẩn: 50 influential citations = Max điểm.
+  const rawInfScore = Math.log10(influential + 1);
+  const normalizedInfScore = Math.min(1, rawInfScore / 1.7); // log10(50) approx 1.7
+  score += normalizedInfScore * 15;
+
+
+  // -----------------------------------------------------------
+  // 2. VENUE QUALITY (Tối đa 20 điểm)
+  // -----------------------------------------------------------
+  if (ref.venue) {
+    const venue = ref.venue.toLowerCase();
+    
+    // Tier 1: Các tạp chí/hội nghị hàng đầu (Danh sách nên config riêng)
+    const topTier = ['nature', 'science', 'cell', 'lancet', 'neurips', 'cvpr', 'icml', 'acl', 'ieee', 'acm'];
+    
+    // Tier 2: Các từ khóa chỉ báo tạp chí khoa học nói chung
+    const midTier = ['journal', 'proceedings', 'conference', 'transactions', 'review', 'letters'];
+
+    if (topTier.some(t => venue.includes(t))) {
+      score += 20;
+    } else if (midTier.some(t => venue.includes(t))) {
       score += 10;
+    } else {
+      score += 5; // Có tên venue nhưng lạ hoắc
     }
-
-    // 6. Open Access (0-5 points) - easier to access
-    if (ref.isOpenAccess) {
-      score += 5;
-    }
-
-    return score;
   }
+
+
+  // -----------------------------------------------------------
+  // 3. METADATA COMPLETENESS (Tối đa 15 điểm)
+  // -----------------------------------------------------------
+  // Với Literature Review, Abstract là thứ quan trọng nhất để đọc lướt.
+  if (ref.abstract && ref.abstract.length > 50) {
+    score += 50; 
+  }
+  // Có DOI hoặc Link PDF giúp truy xuất nguồn gốc dễ dàng
+  if (ref.doi || ref.isOpenAccess || ref.url) {
+    score += 10;
+  }
+
+
+  // -----------------------------------------------------------
+  // 4. RECENCY (Tối đa 15 điểm) - "Gia vị" thêm
+  // -----------------------------------------------------------
+  // Không trừ điểm bài cũ, chỉ thưởng điểm bài mới.
+  // Bài cũ vẫn có thể đạt 85/100 nếu citation cao.
+  if (ref.year) {
+    const currentYear = new Date().getFullYear();
+    const age = Math.max(0, currentYear - ref.year);
+
+    if (age <= 2) score += 15;        // Rất mới (0-2 năm)
+    else if (age <= 5) score += 10;   // Mới (3-5 năm)
+    else if (age <= 10) score += 5;   // Khá (5-10 năm)
+    // Trên 10 năm: 0 điểm phần này (nhưng đã có điểm citation gánh)
+  }
+
+  // Làm tròn và đảm bảo không vượt quá 100 (phòng trường hợp edge case)
+  return Math.min(100, Math.round(score));
+};
 
   /**
    * Dynamically select optimal number of references based on score distribution
@@ -395,9 +427,9 @@ export class PapersService {
       }
     }
     
-    // Constraints: min 5, max 10, prefer quality over quantity
-    const minRefs = 5;
-    const maxRefs = 10;
+    // Constraints: min 10, max 30, prefer quality over quantity
+    const minRefs = 0;
+    const maxRefs = 30000;
     
     let selectedCount = Math.max(minRefs, Math.min(maxRefs, cutoffIndex));
     
@@ -430,21 +462,22 @@ export class PapersService {
       this.logger.log(`\n🔍 Starting reference enrichment and processing for ${references.length} references...`);
       
       // Step 1: Enrich references with external metadata (parallel for speed)
-      const enrichmentPromises = references.map(ref => 
-        this.enrichReferenceMetadata(ref).catch(err => {
-          this.logger.debug(`Enrichment failed for "${ref.title?.substring(0, 40)}": ${err.message}`);
-          return { ...ref, enriched: false };
-        })
-      );
+      // const enrichmentPromises = references.map(ref => 
+      //   this.enrichReferenceMetadata(ref).catch(err => {
+      //     this.logger.debug(`Enrichment failed for "${ref.title?.substring(0, 40)}": ${err.message}`);
+      //     return { ...ref, enriched: false };
+      //   })
+      // );
       
-      const enrichedRefs = await Promise.all(enrichmentPromises);
-      const enrichedCount = enrichedRefs.filter(r => r.enriched).length;
-      this.logger.log(`✅ Enriched ${enrichedCount}/${references.length} references with external metadata`);
+      // const enrichedRefs = await Promise.all(enrichmentPromises);
+      // const enrichedCount = enrichedRefs.filter(r => r.enriched).length;
+      // this.logger.log(`✅ Enriched ${enrichedCount}/${references.length} references with external metadata`);
 
       // Step 2: Calculate advanced priority scores
-      const refsWithScore = enrichedRefs.map(ref => ({
+      // const refsWithScore = enrichedRefs.map(ref => ({
+      const refsWithScore = references.map(ref => ({
         ...ref,
-        priorityScore: this.calculatePriorityScore(ref, savedPaper.title)
+        priorityScore: this.calculatePriorityScore(ref)
       }));
 
       // Sort by priority
@@ -501,7 +534,8 @@ export class PapersService {
       
       this.logger.log(`\n💾 Saving ${selectedRefs.length} references to database...`);
       
-      for (const ref of selectedRefs) {
+      // for (const ref of selectedRefs) {
+      for (const ref of allSortedRefs) {
         // Skip invalid references
         if ((!ref.title || ref.title.trim() === '') && (!ref.doi || ref.doi.trim() === '')) {
           skippedCount++;
@@ -509,65 +543,81 @@ export class PapersService {
         }
 
         // ✅ OPTIMIZATION: Skip AI parsing if data is already complete from API
-        let parsed;
-        const hasCompleteData = ref.authors && ref.year && ref.title;
+        // let parsed;
+        // const hasCompleteData = ref.authors && ref.year && ref.title;
         
-        if (hasCompleteData) {
-          // Use pre-extracted data from Semantic Scholar/CrossRef API
-          parsed = {
-            authors: ref.authors,
-            year: ref.year,
-            title: ref.title,
-            doi: ref.doi || '',
-            confidence: 1.0,  // High confidence - from official API
-            rawCitation: ref.title,
-          };
-          preExtractedCount++;
+        // if (hasCompleteData) {
+        //   // Use pre-extracted data from Semantic Scholar/CrossRef API
+        //   parsed = {
+        //     authors: ref.authors,
+        //     year: ref.year,
+        //     title: ref.title,
+        //     doi: ref.doi || '',
+        //     confidence: 1.0,  // High confidence - from official API
+        //     rawCitation: ref.title,
+        //   };
+        //   preExtractedCount++;
           
-          if (preExtractedCount <= 3) {
-            this.logger.log(`  ✅ Using pre-extracted data (no AI parsing needed): "${ref.title.substring(0, 50)}..."`);
-            this.logger.log(`     → Authors: ${parsed.authors}`);
-            this.logger.log(`     → Year: ${parsed.year}`);
-            this.logger.log(`     → DOI: ${parsed.doi || 'N/A'}`);
-          }
-        } else {
-          // Only use AI parsing when data is incomplete
-          try {
-            parsed = await this.citationParserService.parseCitation(ref.title);
-            aiParsedCount++;
+        //   if (preExtractedCount <= 3) {
+        //     this.logger.log(`  ✅ Using pre-extracted data (no AI parsing needed): "${ref.title.substring(0, 50)}..."`);
+        //     this.logger.log(`     → Authors: ${parsed.authors}`);
+        //     this.logger.log(`     → Year: ${parsed.year}`);
+        //     this.logger.log(`     → DOI: ${parsed.doi || 'N/A'}`);
+        //   }
+        // } 
+        // else {
+        //   // Only use AI parsing when data is incomplete
+        //   try {
+        //     parsed = await this.citationParserService.parseCitation(ref.title);
+        //     aiParsedCount++;
             
-            if (aiParsedCount <= 3) {
-              this.logger.log(`  🤖 AI Parsed: "${ref.title.substring(0, 50)}..."`);
-              this.logger.log(`     → Authors: ${parsed.authors}`);
-              this.logger.log(`     → Year: ${parsed.year}`);
-              this.logger.log(`     → Title: ${parsed.title.substring(0, 50)}...`);
-              this.logger.log(`     → Confidence: ${(parsed.confidence * 100).toFixed(0)}%`);
-            }
-          } catch (error) {
-            this.logger.warn(`Failed to parse citation: ${error.message}`);
-            // Fallback to basic data
-            parsed = {
-              authors: ref.authors || 'Unknown',
-              year: ref.year || null,
-              title: ref.title,
-              doi: ref.doi || undefined,
-              confidence: 0.3,
-              rawCitation: ref.title,
-            };
-          }
-        }
+        //     if (aiParsedCount <= 3) {
+        //       this.logger.log(`  🤖 AI Parsed: "${ref.title.substring(0, 50)}..."`);
+        //       this.logger.log(`     → Authors: ${parsed.authors}`);
+        //       this.logger.log(`     → Year: ${parsed.year}`);
+        //       this.logger.log(`     → Title: ${parsed.title.substring(0, 50)}...`);
+        //       this.logger.log(`     → Confidence: ${(parsed.confidence * 100).toFixed(0)}%`);
+        //     }
+        //   } catch (error) {
+        //     this.logger.warn(`Failed to parse citation: ${error.message}`);
+        //     // Fallback to basic data
+        //     parsed = {
+        //       authors: ref.authors || 'Unknown',
+        //       year: ref.year || null,
+        //       title: ref.title,
+        //       doi: ref.doi || undefined,
+        //       confidence: 0.3,
+        //       rawCitation: ref.title,
+        //     };
+        //   }
+        // }
 
-        const cleanDoi = parsed.doi || ref.doi || '';
-        let cleanTitle = parsed.title;
+        const cleanDoi = ref.doi || '';
+        let cleanTitle = ref.title || '';
         if (cleanTitle.length > 500) {
           cleanTitle = cleanTitle.substring(0, 497) + '...';
         }
 
-        // Kiểm tra xem reference này đã tồn tại chưa (theo DOI)
+        // Kiểm tra xem reference này đã tồn tại chưa (theo DOI hoặc URL của cùng user)
+        // KHÔNG PHÂN BIỆT isReference - tránh trùng với cả main paper và reference paper
         let refPaper: Paper | null = null;
+        
         if (cleanDoi) {
           refPaper = await this.papersRepository.findOne({
-            where: { doi: cleanDoi },
+            where: { 
+              doi: cleanDoi,
+              addedBy: userId,
+            },
+          });
+        }
+        
+        // Nếu không tìm thấy qua DOI, thử tìm qua URL
+        if (!refPaper && ref.url) {
+          refPaper = await this.papersRepository.findOne({
+            where: { 
+              url: ref.url,
+              addedBy: userId,
+            },
           });
         }
 
@@ -576,15 +626,18 @@ export class PapersService {
           this.logger.debug(`Creating new reference paper: ${cleanTitle.substring(0, 60)}...`);
           refPaper = this.papersRepository.create({
             title: cleanTitle || '',
-            authors: parsed.authors || 'Unknown',
-            publicationYear: parsed.year,
+            authors: ref.authors || 'Unknown',
+            publicationYear: ref.year,
             doi: cleanDoi || '',
+            url: ref.url || '',
             abstract: ref.abstract || '',  // ✅ From enrichment
             journal: ref.venue || '',       // ✅ From enrichment
             isReference: true,
             addedBy: userId,
           });
           await this.papersRepository.save(refPaper);
+        } else {
+          this.logger.debug(`Found existing paper (reusing): ${refPaper.title.substring(0, 60)}... (ID: ${refPaper.id}, isReference: ${refPaper.isReference})`);
         }
 
         // Kiểm tra duplicate citation trước khi save
@@ -606,29 +659,29 @@ export class PapersService {
             isInfluential: ref.isInfluential || (ref.influentialCitationCount > 0) || false,
             // AI parsing fields
             citationDepth: 0,
-            parsedAuthors: parsed.authors,
-            parsedTitle: parsed.title,
-            parsedYear: parsed.year,
-            parsingConfidence: parsed.confidence,
-            rawCitation: parsed.rawCitation,
+            // parsedAuthors: parsed.authors,
+            // parsedTitle: parsed.title,
+            // parsedYear: parsed.year,
+            // parsingConfidence: parsed.confidence,
+            // rawCitation: parsed.rawCitation,
           });
           
           this.logger.debug(`✅ Citation saved: Paper ${savedPaper.id} -> Ref ${refPaper.id} [Priority Score: ${ref.priorityScore}, Relevance: ${(ref.priorityScore / 100).toFixed(2)}, Citations: ${ref.citationCount || 0}, Abstract: ${ref.abstract ? 'Yes' : 'No'}]`);
 
           // Auto-rate ALL references if we have content (no score threshold)
           const hasContent = (savedPaper.abstract || savedPaper.fullText) && (refPaper.abstract || refPaper.fullText);
-          if (parsed.confidence > 0.5 && hasContent) {
+          if (hasContent) {
             this.logger.debug(`🤖 Triggering AI auto-rate for citation ${newCitation.id}...`);
             this.citationsService.autoRateRelevance(newCitation.id).catch(err => {
               this.logger.warn(`⚠️ Auto-rate failed for citation ${newCitation.id}: ${err.message}`);
             });
           } else if (!hasContent) {
-            this.logger.debug(`⏸️ Skipped auto-rate (no content): "${parsed.title.substring(0, 40)}..." [Citing has content: ${!!(savedPaper.abstract || savedPaper.fullText)}, Cited has content: ${!!refPaper.abstract}]`);
+            this.logger.debug(`⏸️ Skipped auto-rate (no content): "${ref.title?.substring(0, 40) || 'Unknown'}..." [Citing has content: ${!!(savedPaper.abstract || savedPaper.fullText)}, Cited has content: ${!!refPaper.abstract}]`);
           }
 
           // Auto-download PDF for very high-priority references (score >= 70)
-          if (ref.priorityScore >= 70 && parsed.confidence > 0.5) {
-            this.logger.log(`🚀 Auto-download triggered: "${parsed.title.substring(0, 50)}..." [Score: ${ref.priorityScore}]`);
+          if (ref.priorityScore >= 70) {
+            this.logger.log(`🚀 Auto-download triggered: "${ref.title?.substring(0, 50) || 'Unknown'}..." [Score: ${ref.priorityScore}]`);
             this.autoDownloadReferencePdf(refPaper, userId, 0).catch(err => {
               this.logger.debug(`Auto-download failed: ${err.message}`);
             });
@@ -649,7 +702,7 @@ export class PapersService {
       this.logger.log(`\n✅ Reference Processing Complete:`);
       this.logger.log(`   Total references received: ${references.length}`);
       this.logger.log(`   Dynamically selected: ${selectedRefs.length} (based on score distribution)`);
-      this.logger.log(`   Enriched with external data: ${enrichedCount}`);
+      // this.logger.log(`   Enriched with external data: ${enrichedCount}`);
       this.logger.log(`   Pre-extracted (from API): ${preExtractedCount}`);
       this.logger.log(`   AI parsed (incomplete data): ${aiParsedCount}`);
       this.logger.log(`   Successfully saved: ${savedCount}`);
@@ -729,14 +782,21 @@ export class PapersService {
     };
   }
 
-  async findOne(id: number): Promise<Paper> {
+  async findOne(id: number, userId?: number): Promise<Paper> {
+    const whereCondition: any = { id };
+    
+    // If userId provided, restrict to user's own papers
+    if (userId) {
+      whereCondition.addedBy = userId;
+    }
+    
     const paper = await this.papersRepository.findOne({
-      where: { id },
+      where: whereCondition,
       relations: ['tags', 'user', 'pdfFiles', 'notes'],
     });
 
     if (!paper) {
-      throw new NotFoundException('Paper not found');
+      throw new NotFoundException('Paper not found or you do not have access to this paper');
     }
 
     return paper;
@@ -768,12 +828,8 @@ export class PapersService {
   }
 
   async update(id: number, updatePaperDto: UpdatePaperDto, userId: number): Promise<Paper> {
-    const paper = await this.findOne(id);
-
-    // Check ownership
-    if (paper.addedBy !== userId) {
-      throw new ForbiddenException('You can only edit your own papers');
-    }
+    // findOne now checks ownership internally
+    const paper = await this.findOne(id, userId);
 
     const { tagIds, ...paperData } = updatePaperDto;
 
@@ -789,15 +845,12 @@ export class PapersService {
         .addAndRemove(tagIds, paper.tags.map(t => t.id));
     }
 
-    return await this.findOne(id);
+    return await this.findOne(id, userId);
   }
 
   async remove(id: number, userId: number): Promise<void> {
-    const paper = await this.findOne(id);
-
-    if (paper.addedBy !== userId) {
-      throw new ForbiddenException('You can only delete your own papers');
-    }
+    // findOne now checks ownership internally
+    const paper = await this.findOne(id, userId);
 
     // Remove from user library first
 
@@ -1244,12 +1297,29 @@ export class PapersService {
           this.logger.log(`      ✓ Using AI-extracted data (authors: ${ref.authors?.substring(0, 30)}, year: ${ref.year})`);
         }
 
-        // Create or find reference paper
+        // Create or find reference paper (check both DOI and URL)
         const cleanDoi = parsed.doi || '';
+        const cleanUrl = ref.url || '';
         let refPaper: Paper | null = null;
         
+        // Check by DOI first
         if (cleanDoi) {
-          refPaper = await this.papersRepository.findOne({ where: { doi: cleanDoi } });
+          refPaper = await this.papersRepository.findOne({ 
+            where: { 
+              doi: cleanDoi,
+              addedBy: userId,
+            } 
+          });
+        }
+        
+        // If not found by DOI, check by URL
+        if (!refPaper && cleanUrl) {
+          refPaper = await this.papersRepository.findOne({ 
+            where: { 
+              url: cleanUrl,
+              addedBy: userId,
+            } 
+          });
         }
 
         if (!refPaper) {
@@ -1258,13 +1328,14 @@ export class PapersService {
             authors: parsed.authors,
             publicationYear: parsed.year,
             doi: cleanDoi,
+            url: cleanUrl,
             isReference: true,
             addedBy: userId,
           });
           await this.papersRepository.save(refPaper);
           this.logger.log(`      ✓ Created paper ID: ${refPaper.id} (authors: ${parsed.authors?.substring(0, 30)}, year: ${parsed.year})`);
         } else {
-          this.logger.log(`      ✓ Found existing paper ID: ${refPaper.id}`);
+          this.logger.log(`      ✓ Found existing paper ID: ${refPaper.id} (isReference: ${refPaper.isReference})`);
         }
 
         // Create citation relationship
@@ -1582,14 +1653,8 @@ export class PapersService {
   }
 
   async toggleFavorite(id: number, favorite: boolean, userId: number): Promise<Paper> {
-   
-    const paper = await this.findOne(id);
-    if(!paper) {
-      throw new NotFoundException('Paper not found in library');
-    }
-    if (paper.addedBy !== userId) {
-      throw new ForbiddenException('You can only modify your own papers');
-    }
+    // findOne now checks ownership internally
+    const paper = await this.findOne(id, userId);
     
     paper.favorite = favorite;
     return await this.papersRepository.save(paper);
