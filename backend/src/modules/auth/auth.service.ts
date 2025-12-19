@@ -77,7 +77,6 @@ export class AuthService {
       email: payload.email,
       password: payload.password,
       fullName: payload.fullName,
-      affiliation: payload.affiliation,
     });
 
     return { message: 'Xác thực email thành công' };

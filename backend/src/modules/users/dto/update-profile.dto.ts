@@ -21,32 +21,4 @@ export class UpdateProfileDto {
   @IsOptional()
   @MaxLength(500)
   avatarUrl?: string;
-
-  @ApiProperty({
-    example: 'PhD student interested in AI and ML',
-    description: 'User bio',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  bio?: string;
-
-  @ApiProperty({
-    example: 'University of Science',
-    description: 'Affiliation',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  @MaxLength(255)
-  affiliation?: string;
-
-  @ApiProperty({
-    example: 'Machine Learning, Deep Learning',
-    description: 'Research interests',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  researchInterests?: string;
 }

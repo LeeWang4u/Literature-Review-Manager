@@ -7,7 +7,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: { email: string; password: string; fullName: string; affiliation?: string }) => Promise<void>;
+  register: (data: { email: string; password: string; fullName: string }) => Promise<void>;
   logout: () => void;
   updateUser: (user: User) => void;
 }
@@ -74,7 +74,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('✅ AuthContext: User state updated');
   };
 
-  const register = async (data: { email: string; password: string; fullName: string; affiliation?: string }) => {
+  const register = async (data: { email: string; password: string; fullName: string }) => {
     // await authService.register(data);
     try {
       const response = await authService.register(data);

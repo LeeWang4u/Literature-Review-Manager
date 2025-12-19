@@ -32,15 +32,6 @@ export class User {
   @Column({ name: 'avatar_url', length: 500, nullable: true })
   avatarUrl: string;
 
-  @Column({ type: 'text', nullable: true })
-  bio: string;
-
-  @Column({ length: 255, nullable: true })
-  affiliation: string;
-
-  @Column({ name: 'research_interests', type: 'text', nullable: true })
-  researchInterests: string;
-
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

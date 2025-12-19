@@ -13,8 +13,13 @@ import {
   Chip,
   TextField,
   InputAdornment,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
 } from '@mui/material';
-import { Add, Search, ArrowBack } from '@mui/icons-material';
+import { Add, Search, ArrowBack, Article, Close, Edit } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { NoteCard } from '@/components/notes/NoteCard';
 import { NoteDialog, NoteFormData} from '@/components/notes/NoteDialog';
@@ -29,6 +34,7 @@ const NotesPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [viewingNote, setViewingNote] = useState<Note | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch paper details
@@ -141,13 +147,20 @@ const NotesPage: React.FC = () => {
     deleteMutation.mutate(id);
   };
 
+  const handleViewNote = (note: Note) => {
+    setViewingNote(note);
+  };
+
+  const handleCloseViewDialog = () => {
+    setViewingNote(null);
+  };
+
   // Filter notes by search query
   const filteredNotes = notes.filter((note) => {
     const query = searchQuery.toLowerCase();
     return (
     (note.title?.toLowerCase() || '').includes(query) ||
-    (note.content?.toLowerCase() || '').includes(query) ||
-    (note.highlightedText?.toLowerCase() || '').includes(query)
+    (note.content?.toLowerCase() || '').includes(query)
     );
   });
  
@@ -276,11 +289,104 @@ const NotesPage: React.FC = () => {
                   note={note}
                   onEdit={handleEditNote}
                   onDelete={handleDeleteNote}
+                  onView={handleViewNote}
                 />
               </Grid>
             ))}
           </Grid>
         )}
+
+        {/* View Note Detail Dialog */}
+        <Dialog
+          open={!!viewingNote}
+          onClose={handleCloseViewDialog}
+          maxWidth="md"
+          fullWidth
+          PaperProps={{
+            sx: { minHeight: '400px' },
+          }}
+        >
+          <DialogTitle>
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6" display="flex" alignItems="center" gap={1}>
+                <Article color="primary" />
+                {viewingNote?.title}
+              </Typography>
+              <IconButton onClick={handleCloseViewDialog}>
+                <Close />
+              </IconButton>
+            </Box>
+          </DialogTitle>
+          <DialogContent dividers>
+            <Box display="flex" flexDirection="column" gap={3}>
+              {/* Content */}
+              <Box>
+                <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                  Content
+                </Typography>
+                <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {viewingNote?.content}
+                </Typography>
+              </Box>
+
+              {/* Page Number */}
+              {viewingNote?.pageNumber && (
+                <Box>
+                  <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                    Page Number
+                  </Typography>
+                  <Chip 
+                    label={`Page ${viewingNote.pageNumber}`}
+                    color="primary"
+                    variant="outlined"
+                  />
+                </Box>
+              )}
+
+              {/* Metadata */}
+              <Box>
+                <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                  Metadata
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block">
+                  Created: {viewingNote && new Date(viewingNote.createdAt).toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </Typography>
+                {viewingNote && viewingNote.updatedAt !== viewingNote.createdAt && (
+                  <Typography variant="caption" color="textSecondary" display="block">
+                    Updated: {new Date(viewingNote.updatedAt).toLocaleString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </Typography>
+                )}
+              </Box>
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCloseViewDialog}>Close</Button>
+            <Button 
+              variant="outlined" 
+              startIcon={<Edit />}
+              onClick={() => {
+                if (viewingNote) {
+                  handleEditNote(viewingNote);
+                  handleCloseViewDialog();
+                }
+              }}
+            >
+              Edit
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Note Dialog */}
         <NoteDialog

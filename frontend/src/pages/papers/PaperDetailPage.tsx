@@ -313,7 +313,17 @@ const PaperDetailPage: React.FC = () => {
               {paper.url && (
                 <Typography variant="body2">
                   <strong>URL:</strong>{' '}
-                  <a href={paper.url} target="_blank" rel="noopener noreferrer">
+                  <a 
+                    href={paper.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    style={{ 
+                      wordBreak: 'break-all', 
+                      overflowWrap: 'break-word',
+                      display: 'inline-block',
+                      maxWidth: '100%'
+                    }}
+                  >
                     {paper.url}
                   </a>
                 </Typography>

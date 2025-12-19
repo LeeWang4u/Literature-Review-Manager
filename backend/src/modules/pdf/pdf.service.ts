@@ -63,7 +63,6 @@ export class PdfService {
       fileSize: file.size,
       mimeType: file.mimetype,
       version,
-      uploadedBy: userId,
     });
 
     const savedPdfFile = await this.pdfRepository.save(pdfFile);

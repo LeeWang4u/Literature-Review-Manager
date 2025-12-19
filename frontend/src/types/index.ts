@@ -20,15 +20,11 @@ export interface RegisterData {
   email: string;
   password: string;
   fullName: string;
-  affiliation?: string;
 }
 
 export interface UpdateProfileData {
   fullName?: string;
   avatarUrl?: string;
-  bio?: string;
-  affiliation?: string;
-  researchInterests?: string[];
 }
 
 // Paper types
@@ -145,7 +141,6 @@ export interface Note {
   id: number;
   title: string;
   content: string;
-  highlightedText?: string;
   pageNumber?: number;
   paperId: number;
   paper?: Paper;
@@ -157,7 +152,6 @@ export interface Note {
 export interface CreateNoteData {
   content: string;
   paperId: number;
-  highlightedText?: string;
   pageNumber?: number;
 }
 

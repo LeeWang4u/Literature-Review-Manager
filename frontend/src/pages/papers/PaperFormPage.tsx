@@ -470,41 +470,41 @@ const PaperFormPage: React.FC = () => {
     }
   };
 
-  const handleDownloadArxivPdf = async () => {
-    if (!arxivMetadata || !arxivMetadata.arxivId) {
-      toast.error('No ArXiv PDF available');
-      return;
-    }
+  // const handleDownloadArxivPdf = async () => {
+  //   if (!arxivMetadata || !arxivMetadata.arxivId) {
+  //     toast.error('No ArXiv PDF available');
+  //     return;
+  //   }
 
-    try {
-      toast.loading('Downloading PDF from ArXiv...', { duration: 2000 });
+  //   try {
+  //     toast.loading('Downloading PDF from ArXiv...', { duration: 2000 });
 
-      const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
+  //     const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
 
-      // Convert base64 to blob
-      const binaryString = atob(result.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const blob = new Blob([bytes], { type: 'application/pdf' });
+  //     // Convert base64 to blob
+  //     const binaryString = atob(result.data);
+  //     const bytes = new Uint8Array(binaryString.length);
+  //     for (let i = 0; i < binaryString.length; i++) {
+  //       bytes[i] = binaryString.charCodeAt(i);
+  //     }
+  //     const blob = new Blob([bytes], { type: 'application/pdf' });
 
-      // Create download link
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', result.filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+  //     // Create download link
+  //     const url = window.URL.createObjectURL(blob);
+  //     const link = document.createElement('a');
+  //     link.href = url;
+  //     link.setAttribute('download', result.filename);
+  //     document.body.appendChild(link);
+  //     link.click();
+  //     link.remove();
+  //     window.URL.revokeObjectURL(url);
 
-      toast.success(`PDF downloaded: ${result.filename}`);
-    } catch (error: any) {
-      console.error('Error downloading ArXiv PDF:', error);
-      toast.error('Failed to download PDF from ArXiv');
-    }
-  };
+  //     toast.success(`PDF downloaded: ${result.filename}`);
+  //   } catch (error: any) {
+  //     console.error('Error downloading ArXiv PDF:', error);
+  //     toast.error('Failed to download PDF from ArXiv');
+  //   }
+  // };
 
   const handleQuickSave = async () => {
     // Get current form values

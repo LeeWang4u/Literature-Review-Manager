@@ -20,7 +20,6 @@ const RegisterPage: React.FC = () => {
     password: '',
     confirmPassword: '',
     fullName: '',
-    affiliation: '',
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -60,7 +59,6 @@ const RegisterPage: React.FC = () => {
         email: formData.email,
         password: formData.password,
         fullName: formData.fullName,
-        affiliation: formData.affiliation || undefined,
       });
       console.log('Registration result:', result);
       const verifyToken = result.verifyToken;
@@ -123,16 +121,6 @@ const RegisterPage: React.FC = () => {
               name="email"
               autoComplete="email"
               value={formData.email}
-              onChange={handleChange}
-              disabled={loading}
-            />
-            <TextField
-              margin="normal"
-              fullWidth
-              id="affiliation"
-              label="Affiliation (Optional)"
-              name="affiliation"
-              value={formData.affiliation}
               onChange={handleChange}
               disabled={loading}
             />
