@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { User } from '@/types';
 import { authService } from '@/services/auth.service';
 
@@ -29,6 +30,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     // Check if user is logged in on mount
@@ -72,6 +74,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('✅ AuthContext: Login API successful, user:', response.user);
     setUser(response.user);
     console.log('✅ AuthContext: User state updated');
+    
+    // Clear all cached data and refetch for new user
+    console.log('🔄 AuthContext: Clearing React Query cache...');
+    queryClient.clear();
+    console.log('✅ AuthContext: Cache cleared');
   };
 
   const register = async (data: { email: string; password: string; fullName: string }) => {
@@ -89,8 +96,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const logout = () => {
+    console.log('🚪 AuthContext: Starting logout...');
     authService.logout();
     setUser(null);
+    
+    // Clear all React Query cache
+    console.log('🔄 AuthContext: Clearing React Query cache...');
+    queryClient.clear();
+    console.log('✅ AuthContext: Logout complete, cache cleared');
   };
 
   const updateUser = (updatedUser: User) => {

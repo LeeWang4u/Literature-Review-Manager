@@ -289,3 +289,29 @@ export interface ApiError {
   message: string;
   error?: string;
 }
+
+// Library types
+export interface Library {
+  id: number;
+  userId: number;
+  name: string;
+  description?: string;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface CreateLibraryData {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateLibraryData {
+  name?: string;
+  description?: string;
+}
+
+export interface LibraryPaper {
+  libraryId: number;
+  paperId: number;
+  addedAt: string;
+}

@@ -15,6 +15,7 @@ import { CitationMetricsService } from '../citations/citation-metrics.service';
 import { AIProviderService } from '../summaries/ai-provider.service';
 import { PaperMetadataService } from './paper-metadata.service';
 import { PdfService } from '../pdf/pdf.service';
+import { LibrariesService } from '../libraries/libraries.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -38,6 +39,7 @@ export class PapersService {
     private citationMetricsService: CitationMetricsService,
     private aiProviderService: AIProviderService,
     private paperMetadataService: PaperMetadataService,
+    private librariesService: LibrariesService,
     @Inject(forwardRef(() => PdfService))
     private pdfService: PdfService,
   ) { }
@@ -144,10 +146,15 @@ export class PapersService {
       this.logger.log(`\n⏭️  SKIPPING REFERENCE PROCESSING: No references provided`);
     }
 
-    const addToLibraryDto = {
-      paperId: savedPaper.id,
+    // Add paper to default library
+    try {
+      const defaultLibrary = await this.librariesService.createDefaultLibrary(userId);
+      await this.librariesService.addPaperToLibrary(defaultLibrary.id, savedPaper.id, userId);
+      this.logger.log(`\n📚 ADDED TO DEFAULT LIBRARY`);
+      this.logger.log(`   Library: ${defaultLibrary.name}`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to add paper to default library: ${error.message}`);
     }
-
 
     this.logger.log(`\n✅ PAPER CREATED SUCCESSFULLY`);
     this.logger.log(`   Paper ID: ${savedPaper.id}`);
@@ -749,12 +756,12 @@ export class PapersService {
         }
 
         // Auto-download PDF for very high-priority references (score >= 70)
-        if (ref.priorityScore >= 70) {
-          this.logger.log(`🚀 Auto-download triggered: "${ref.title?.substring(0, 50) || 'Unknown'}..." [Score: ${ref.priorityScore}]`);
-          this.autoDownloadReferencePdf(refPaper, userId, 0).catch(err => {
-            this.logger.debug(`Auto-download failed: ${err.message}`);
-          });
-        }
+        // if (ref.priorityScore >= 70) {
+        //   this.logger.log(`🚀 Auto-download triggered: "${ref.title?.substring(0, 50) || 'Unknown'}..." [Score: ${ref.priorityScore}]`);
+        //   this.autoDownloadReferencePdf(refPaper, userId, 0).catch(err => {
+        //     this.logger.debug(`Auto-download failed: ${err.message}`);
+        //   });
+        // }
 
         savedCount++;
       } else {
@@ -1416,22 +1423,31 @@ export class PapersService {
         });
 
         if (!existingCitation) {
-          const citation = await this.paperCitationsRepository.save({
-            citingPaperId: parentPaper.id,
-            citedPaperId: refPaper.id,
-            createdBy: userId,
-            citationContext: ref.citationContext || null,
-            relevanceScore: ref.priorityScore ? ref.priorityScore / 100 : null,
-            isInfluential: ref.isInfluential || false,
-            citationDepth: depth,
-            parsedAuthors: parsed.authors,
-            parsedTitle: parsed.title,
-            parsedYear: parsed.year,
-            parsingConfidence: parsed.confidence,
-            rawCitation: parsed.rawCitation,
-          });
-          this.logger.log(`      ✓ Created citation ID: ${citation.id}`);
-          successCount++;
+          try {
+            const citation = await this.paperCitationsRepository.save({
+              citingPaperId: parentPaper.id,
+              citedPaperId: refPaper.id,
+              createdBy: userId,
+              citationContext: ref.citationContext || null,
+              relevanceScore: ref.priorityScore ? ref.priorityScore / 100 : null,
+              isInfluential: ref.isInfluential || false,
+              citationDepth: depth,
+              parsedAuthors: parsed.authors,
+              parsedTitle: parsed.title,
+              parsedYear: parsed.year,
+              parsingConfidence: parsed.confidence,
+              rawCitation: parsed.rawCitation,
+            });
+            this.logger.log(`      ✓ Created citation ID: ${citation.id}`);
+            successCount++;
+          } catch (saveError) {
+            // Handle duplicate key error gracefully (race condition)
+            if (saveError.code === 'ER_DUP_ENTRY' || saveError.message?.includes('Duplicate entry')) {
+              this.logger.log(`      • Citation already exists (race condition handled)`);
+            } else {
+              throw saveError; // Re-throw if it's a different error
+            }
+          }
         } else {
           this.logger.log(`      • Citation already exists ID: ${existingCitation.id}`);
         }

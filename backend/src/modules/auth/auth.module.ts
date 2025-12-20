@@ -9,10 +9,12 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { EmailModule } from '../mail/email.module';
+import { LibrariesModule } from '../libraries/libraries.module';
 
 @Module({
   imports: [
     UsersModule,
+    LibrariesModule,
     PassportModule.register({ session: false }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

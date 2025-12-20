@@ -9,12 +9,14 @@ import { PaperMetadataService } from './paper-metadata.service';
 import { CitationsModule } from '../citations/citations.module';
 import { PdfModule } from '../pdf/pdf.module';
 import { SummariesModule } from '../summaries/summaries.module';
+import { LibrariesModule } from '../libraries/libraries.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Paper, Citation, Note]),
     CitationsModule,
     SummariesModule,
+    LibrariesModule,
     forwardRef(() => PdfModule),
   ],
   providers: [PapersService, PaperMetadataService],

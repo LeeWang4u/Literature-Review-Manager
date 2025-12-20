@@ -22,11 +22,12 @@ import {
 } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
-import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, ArrowBack } from '@mui/icons-material';
+import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, ArrowBack, FolderOpen } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { pdfService } from '@/services/pdf.service';
 import { noteService } from '@/services/note.service';
+import { AddToLibraryModal } from '@/components/libraries/AddToLibraryModal';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -41,6 +42,7 @@ const PaperDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showUploader, setShowUploader] = useState(false);
+  const [showLibraryModal, setShowLibraryModal] = useState(false);
 
   const [openPopupDelete, setOpenPopupDelete] = useState(false);
 
@@ -234,6 +236,14 @@ const PaperDetailPage: React.FC = () => {
                 {paper.title}
               </Typography>
               <Box display="flex" gap={1}>
+                <Tooltip title="Add to Library">
+                  <IconButton
+                    color="primary"
+                    onClick={() => setShowLibraryModal(true)}
+                  >
+                    <FolderOpen />
+                  </IconButton>
+                </Tooltip>
                 <Tooltip title="Edit Paper">
                   <IconButton
                     color="primary"
@@ -450,6 +460,16 @@ const PaperDetailPage: React.FC = () => {
             paperContext={paper.abstract}
           />
         </Container>
+
+        {/* Add to Library Modal */}
+        <AddToLibraryModal
+          paperId={paper.id}
+          isOpen={showLibraryModal}
+          onClose={() => setShowLibraryModal(false)}
+          onSuccess={() => {
+            toast.success('Library updated successfully');
+          }}
+        />
       </MainLayout>
     </>
   );

@@ -13,6 +13,7 @@ import { CitationsModule } from './modules/citations/citations.module';
 import { PdfModule } from './modules/pdf/pdf.module';
 import { SummariesModule } from './modules/summaries/summaries.module';
 import { ChatModule } from './modules/chat/chat.module';
+import { LibrariesModule } from './modules/libraries/libraries.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { ChatModule } from './modules/chat/chat.module';
     PdfModule,
     SummariesModule,
     ChatModule,
+    LibrariesModule,
   ],
   controllers: [],
   providers: [],
