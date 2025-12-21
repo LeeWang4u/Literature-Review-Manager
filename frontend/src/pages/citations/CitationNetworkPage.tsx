@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -35,7 +35,6 @@ import {
   RestartAlt,
   Close,
   Circle,
-  Star,
   Edit,
   Save,
   Cancel,
@@ -50,6 +49,65 @@ import * as d3 from 'd3';
 import { citationService } from '@/services/citation.service';
 import { paperService } from '@/services/paper.service';
 import toast from 'react-hot-toast';
+
+// Helper function to compute impact tiers
+// Compute impact tiers for a set of references
+const computeImpactTiers = (references: any[], displayBudget: number = 50): any[] => {
+  if (references.length === 0) return [];
+
+  // Sort by impactScore (relevanceScore) descending
+  const sortedRefs = [...references].sort((a, b) =>
+    (b.relevanceScore || 0) - (a.relevanceScore || 0)
+  );
+
+  const tiers = [];
+  const totalRefs = sortedRefs.length;
+  const targetTierSize = Math.max(3, Math.min(15, Math.floor(displayBudget / 3)));
+
+  let currentIndex = 0;
+  let tierNum = 1;
+
+  while (currentIndex < totalRefs && tierNum <= 10) {
+    const remainingRefs = totalRefs - currentIndex;
+    const proposedTierSize = Math.min(targetTierSize, remainingRefs);
+    let actualTierSize = proposedTierSize;
+
+    // Look for significant score gaps
+    for (let i = 1; i < Math.min(proposedTierSize, remainingRefs - 1); i++) {
+      const currentScore = sortedRefs[currentIndex + i].relevanceScore || 0;
+      const nextScore = sortedRefs[currentIndex + i + 1]?.relevanceScore || 0;
+      const gap = currentScore - nextScore;
+
+      if (gap > currentScore * 0.2 && i >= 3) {
+        actualTierSize = i + 1;
+        break;
+      }
+    }
+
+    const endIndex = currentIndex + actualTierSize;
+    const tierRefs = sortedRefs.slice(currentIndex, endIndex);
+    const nodeIds = tierRefs.map(ref => ref.id);
+
+    tiers.push({
+      tier: tierNum,
+      nodeIds,
+      nodeCount: nodeIds.length,
+    });
+
+    currentIndex = endIndex;
+    tierNum++;
+  }
+
+  // Append remaining refs to last tier
+  if (currentIndex < totalRefs && tiers.length > 0) {
+    const lastTier = tiers[tiers.length - 1];
+    const remainingRefs = sortedRefs.slice(currentIndex);
+    lastTier.nodeIds.push(...remainingRefs.map(ref => ref.id));
+    lastTier.nodeCount = lastTier.nodeIds.length;
+  }
+
+  return tiers;
+};
 
 interface NodeData {
   id: number;
@@ -70,11 +128,22 @@ interface NodeData {
 }
 
 const CitationNetworkPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const { id: idParam } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Handle case where id might be undefined
+  if (!idParam) {
+    return (
+      <Container maxWidth="lg" sx={{ mt: 4 }}>
+        <Alert severity="error">Invalid paper ID</Alert>
+      </Container>
+    );
+  }
+
+  const id = idParam;
 
   const [depth, setDepth] = useState<number>(1);
   const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
@@ -86,12 +155,8 @@ const CitationNetworkPage: React.FC = () => {
   const [filteredCount, setFilteredCount] = useState({ nodes: 0, edges: 0 });
   // const [selectedTiers, setSelectedTiers] = useState<any[]>([]); // Tier UI removed
   const [selectedTierLevel, setSelectedTierLevel] = useState<number>(1); // 1 = Tier 1, 2 = Tier 1+2, etc., 0 = All
-  
-  // Per-reference level 2 limits
-  const [usePerReferenceLimits, setUsePerReferenceLimits] = useState(false);
-  const [perReferenceLevel2Limit, setPerReferenceLevel2Limit] = useState<number>(10);
-  const [editingPerRefLimit, setEditingPerRefLimit] = useState(false);
-  const [tempPerRefLimit, setTempPerRefLimit] = useState<string>('10');
+  const [selectedTierLevelDepth2, setSelectedTierLevelDepth2] = useState<number>(0); // 0 = None, 1 = parent 1, 2 = parents 1-2, etc.
+  const [selectedDepth2TierLevels, setSelectedDepth2TierLevels] = useState<{ [parentId: number]: number }>({}); // Per-parent tier selection
   
   // Add manual node state
   const [addNodeDialog, setAddNodeDialog] = useState(false);
@@ -129,16 +194,6 @@ const CitationNetworkPage: React.FC = () => {
     }
   }, [networkError, navigate]);
 
-  // Update selectedTierLevel when network changes
-  useEffect(() => {
-    if (network && network.tiers && network.tiers.length > 0) {
-      // Keep current selection if valid, otherwise default to 1
-      if (selectedTierLevel > network.tiers.length) {
-        setSelectedTierLevel(1);
-      }
-    }
-  }, [network]);
-
   const { data: references = [] } = useQuery({
     queryKey: ['citations', 'references', id],
     queryFn: () => citationService.getReferences(Number(id)),
@@ -147,6 +202,114 @@ const CitationNetworkPage: React.FC = () => {
 
   // Auto-enable tier selection when references are available
   const showTopOnly = references.length > 0;
+
+  // Compute depth 1 tiers (from network.tiers)
+  const depth1Tiers = network?.tiers || [];
+  
+  // Compute depth 2 per-parent tiers
+  const depth2ParentData = React.useMemo(() => {
+    if (!network?.nodes || !network?.edges) return [];
+    
+    const depth1Nodes = (network.nodes as NodeData[]).filter((n) => 
+      ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 1
+    );
+    const depth2Nodes = (network.nodes as NodeData[]).filter((n) => 
+      ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 2
+    );
+
+    if (depth1Nodes.length === 0) return [];
+
+    // For each depth 1 node (parent), find its depth 2 children (references)
+    const parentData = depth1Nodes.map((parent) => {
+      // Find all depth 2 nodes that are children of this parent
+      const childEdges = network.edges.filter((edge: any) => {
+        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+        return sourceId === parent.id;
+      });
+
+      const children = childEdges
+        .map((edge: any) => {
+          const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+          return depth2Nodes.find(n => n.id === targetId);
+        })
+        .filter(Boolean) as NodeData[];
+
+      // Add relevanceScore from edges if available
+      const childrenWithScores = children.map(child => {
+        const edge = network.edges.find((e: any) => {
+          const sourceId = typeof e.source === 'object' ? e.source.id : e.source;
+          const targetId = typeof e.target === 'object' ? e.target.id : e.target;
+          return sourceId === parent.id && targetId === child.id;
+        });
+        return {
+          ...child,
+          relevanceScore: (edge as any)?.relevanceScore ?? child.relevanceScore ?? 0
+        };
+      });
+
+      // Compute tiers for this parent's children
+      const displayBudget = 15; // Per-parent display budget
+      const tiers = computeImpactTiers(childrenWithScores, displayBudget);
+
+      return {
+        parentId: parent.id,
+        parentNode: parent,
+        children: childrenWithScores,
+        tiers,
+        totalChildren: children.length
+      };
+    }).filter(p => p.children.length > 0); // Only keep parents with children
+
+    // Sort by total children descending (most connected parents first)
+    return parentData.sort((a, b) => b.totalChildren - a.totalChildren);
+  }, [network]);
+
+  // Simplified depth2Tiers for UI - represents parent selection
+  const depth2Tiers = React.useMemo(() => {
+    return depth2ParentData.map((parent, index) => ({
+      tier: index + 1,
+      parentId: parent.parentId,
+      nodeCount: parent.totalChildren,
+      nodeIds: [parent.parentId],
+      nodes: [parent.parentNode]
+    }));
+  }, [depth2ParentData]);
+
+  // Update selectedDepth2TierLevels when selectedTierLevelDepth2 or depth2ParentData changes
+  useEffect(() => {
+    console.log('🔄 useEffect: Updating selectedDepth2TierLevels');
+    console.log(`   selectedTierLevelDepth2: ${selectedTierLevelDepth2}, depth2ParentData.length: ${depth2ParentData.length}`);
+
+    if (depth2ParentData.length > 0) {
+      const newTierLevels = { ...selectedDepth2TierLevels };
+
+      // Ensure all currently selected parents have tier levels
+      if (selectedTierLevelDepth2 > 0) {
+        const selectedParents = depth2ParentData.slice(0, selectedTierLevelDepth2);
+        selectedParents.forEach(parentData => {
+          if (!(parentData.parentId in newTierLevels)) {
+            newTierLevels[parentData.parentId] = 1; // Default to tier 1
+            console.log(`   ➕ Added default tier 1 for parent ${parentData.parentId}`);
+          }
+        });
+      }
+
+      // Remove tier levels for parents that are no longer in the first selectedTierLevelDepth2 parents
+      Object.keys(newTierLevels).forEach(parentId => {
+        const parentIndex = depth2ParentData.findIndex(p => p.parentId === Number(parentId));
+        const shouldKeep = parentIndex >= 0 && parentIndex < selectedTierLevelDepth2;
+        if (!shouldKeep) {
+          delete newTierLevels[Number(parentId)];
+          console.log(`   ➖ Removed tier level for parent ${parentId} (no longer in selection)`);
+        }
+      });
+
+      console.log('   📊 Final selectedDepth2TierLevels:', newTierLevels);
+      setSelectedDepth2TierLevels(newTierLevels);
+    } else {
+      setSelectedDepth2TierLevels({});
+    }
+  }, [selectedTierLevelDepth2, depth2ParentData]);
 
   const updateCitationMutation = useMutation({
     mutationFn: ({ citationId, data }: { citationId: number; data: any }) =>
@@ -291,71 +454,131 @@ const CitationNetworkPage: React.FC = () => {
     },
   });
 
-  useEffect(() => {
-    if (!network || !svgRef.current || !containerRef.current) return;
+  // Compute filtered nodes and edges based on tier selections
+  const { filteredNodes, filteredEdges } = useMemo(() => {
+    console.log('🔄 useMemo: Computing filtered nodes and edges');
+    console.log('   Dependencies changed:', {
+      network: !!network,
+      showTopOnly,
+      depth1Tiers: depth1Tiers?.length,
+      selectedTierLevel,
+      selectedTierLevelDepth2,
+      depth2ParentData: depth2ParentData.length,
+      selectedDepth2TierLevels: Object.keys(selectedDepth2TierLevels).length,
+      references: references.length,
+      id
+    });
 
-    d3.select(svgRef.current).selectAll('*').remove();
+    if (!network) return { filteredNodes: [], filteredEdges: [] };
 
     // Filter nodes based on showTopOnly - don't create copies to preserve D3 references
     let filteredNodes = network.nodes;
     let filteredEdges = network.edges;
 
     // Apply tier-aware selection algorithm
-    if (showTopOnly && network.tiers && network.tiers.length > 0) {
+    if (showTopOnly && depth1Tiers && depth1Tiers.length > 0) {
       console.log('🔍 Tier-aware selection algorithm activated');
-      console.log(`   References: ${references.length}, Selected Tier Level: ${selectedTierLevel}, Tiers: ${network.tiers.length}`);
+      console.log(`   References: ${references.length}, Selected Tier Level: ${selectedTierLevel}, Depth2 Tier Level: ${selectedTierLevelDepth2}`);
+      console.log(`   Depth1 Tiers: ${depth1Tiers.length}, Depth2 Tiers: ${depth2Tiers.length}`);
 
       const selectedNodeIds = new Set<number>();
-      const selectedTiersList: typeof network.tiers = [];
+      const selectedTiersList: typeof depth1Tiers = [];
       const mainPaperId = Number(id);
 
-      // Select tiers based on selectedTierLevel
+      // Select depth 1 tiers based on selectedTierLevel
       let currentCount = 0;
 
       if (selectedTierLevel === 0) {
-        // Show all tiers
-        console.log('🎯 Target: show all tiers');
-        for (const tier of network.tiers) {
-          tier.nodeIds.forEach(id => selectedNodeIds.add(id));
+        // Show all depth 1 tiers
+        console.log('🎯 Target: show all depth 1 tiers');
+        let beforeSize = selectedNodeIds.size;
+        for (const tier of depth1Tiers) {
+          const beforeTierSize = selectedNodeIds.size;
+          tier.nodeIds.forEach((id: number) => selectedNodeIds.add(id));
+          const addedCount = selectedNodeIds.size - beforeTierSize;
           currentCount += tier.nodeCount;
           selectedTiersList.push(tier);
-          console.log(`   ✅ Tier ${tier.tier}: added all ${tier.nodeCount} nodes (Total: ${currentCount})`);
+          console.log(`   ✅ Depth1 Tier ${tier.tier}: claimed ${tier.nodeCount} nodes, actually added ${addedCount} unique nodes (Total claimed: ${currentCount}, Total unique: ${selectedNodeIds.size})`);
         }
+        console.log(`   📊 Depth1 OVERALL: claimed ${currentCount} nodes, actually selected ${selectedNodeIds.size} unique nodes (${selectedNodeIds.size - beforeSize} added)`);
       } else {
-        // Show up to selectedTierLevel
-        console.log(`🎯 Target: show up to Tier ${selectedTierLevel}`);
-        for (const tier of network.tiers) {
+        // Show up to selectedTierLevel for depth 1
+        console.log(`🎯 Target: show up to Depth1 Tier ${selectedTierLevel}`);
+        let beforeSize = selectedNodeIds.size;
+        for (const tier of depth1Tiers) {
           if (tier.tier <= selectedTierLevel) {
-            tier.nodeIds.forEach(id => selectedNodeIds.add(id));
+            const beforeTierSize = selectedNodeIds.size;
+            tier.nodeIds.forEach((id: number) => selectedNodeIds.add(id));
+            const addedCount = selectedNodeIds.size - beforeTierSize;
             currentCount += tier.nodeCount;
             selectedTiersList.push(tier);
-            console.log(`   ✅ Tier ${tier.tier}: added all ${tier.nodeCount} nodes (Total: ${currentCount})`);
+            console.log(`   ✅ Depth1 Tier ${tier.tier}: claimed ${tier.nodeCount} nodes, actually added ${addedCount} unique nodes (Total claimed: ${currentCount}, Total unique: ${selectedNodeIds.size})`);
           } else {
-            break; // Stop at tiers beyond selected level
+            break;
           }
         }
+        console.log(`   📊 Depth1 OVERALL: claimed ${currentCount} nodes, actually selected ${selectedNodeIds.size} unique nodes (${selectedNodeIds.size - beforeSize} added)`);
       }
 
-      console.log(`📊 Selected ${selectedTiersList.length} tiers, ${currentCount} references`);
-      
-      // Update UI tiers display (commented out as UI removed)
-      // setSelectedTiers(selectedTiersList.map(t => ({
-      //   tier: t.tier,
-      //   minScore: t.minScore,
-      //   maxScore: t.maxScore,
-      //   refs: [],
-      //   label: t.label + (t.quintile ? ` (${t.quintile})` : '')
-      // })));
+      console.log(`📊 After depth1 selection: ${selectedTiersList.length} tiers, ${currentCount} refs (tier counts sum), actual selected nodes: ${selectedNodeIds.size}`);
 
-      // Filter nodes: Keep ONLY main paper + selected tier nodes (depth 1)
-      // Each depth level operates independently - no auto-inclusion of nested references
+      // Select depth 2 nodes using per-parent tier-aware selection
+      let depth2Count = 0;
+      if (selectedTierLevelDepth2 > 0 && depth2ParentData.length > 0) {
+        console.log(`🎯 Target: show up to ${selectedTierLevelDepth2} depth 2 parent(s)`);
+
+        // Select parents based on selectedTierLevelDepth2
+        const selectedParents = depth2ParentData.slice(0, selectedTierLevelDepth2);
+
+        selectedParents.forEach((parentData, index) => {
+          const parentId = parentData.parentId;
+
+          // Get tier selection for this parent (default to tier 1)
+          const parentTierLevel = selectedDepth2TierLevels[parentId] ?? 1;
+
+          console.log(`   📄 Parent ${index + 1} (ID: ${parentId}): selecting tier level ${parentTierLevel}`);
+
+          // Select nodes from this parent's tiers up to parentTierLevel
+          let parentSelectedCount = 0;
+          const maxTierLevel = parentData.tiers.length;
+          const effectiveTierLevel = parentTierLevel >= 999 ? maxTierLevel : parentTierLevel;
+
+          for (const tier of parentData.tiers) {
+            if (tier.tier <= effectiveTierLevel) {
+              tier.nodeIds.forEach((id: number) => {
+                selectedNodeIds.add(id);
+                parentSelectedCount++;
+              });
+            }
+          }
+
+          depth2Count += parentSelectedCount;
+          console.log(`      ✅ Selected ${parentSelectedCount} children from ${parentData.tiers.length} tier(s)`);
+        });
+      }
+
+      console.log(`📊 After depth2 selection: depth2 added ${depth2Count} refs, total nodes in set: ${selectedNodeIds.size}`);
+      console.log(`📊 FINAL SUMMARY: depth1 (${currentCount} refs from tiers) + depth2 (${depth2Count} refs) = ${selectedNodeIds.size} unique selected nodes`);
+      console.log(`   Expected total papers: ${selectedNodeIds.size + 1} (including main paper ${mainPaperId})`);
+
+      // Filter nodes: Keep main paper + selected tier nodes from both depths
+      console.log(`🔍 Filtering: ${selectedNodeIds.size} selected nodes + 1 main paper (${mainPaperId}) from ${network.nodes.length} total nodes`);
+      
       filteredNodes = network.nodes.filter((node: any) => {
         // Always keep main paper (depth 0)
         if (node.id === mainPaperId) return true;
 
-        // Keep ONLY selected tier nodes (depth 1 - direct references)
+        // Keep selected tier nodes
         return selectedNodeIds.has(node.id);
       });
+
+      console.log(`   Result: ${filteredNodes.length} nodes kept (should be ${selectedNodeIds.size + 1} with main paper)`);
+      
+      // Verify depth distribution
+      const depth0Count = filteredNodes.filter((n: any) => ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 0).length;
+      const depth1Count = filteredNodes.filter((n: any) => ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 1).length;
+      const depth2Count_actual = filteredNodes.filter((n: any) => ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 2).length;
+      console.log(`   Distribution: depth0=${depth0Count}, depth1=${depth1Count}, depth2=${depth2Count_actual}`);
 
       const filteredNodeIds = new Set(filteredNodes.map((n: any) => n.id));
       filteredEdges = network.edges.filter((edge: any) => {
@@ -387,80 +610,18 @@ const CitationNetworkPage: React.FC = () => {
       });
     }
 
-    // Apply per-reference level 2 limits if enabled
-    if (usePerReferenceLimits) {
-      console.log(`🎯 Applying per-reference level 2 limits: ${perReferenceLevel2Limit} nodes per reference`);
+    return { filteredNodes, filteredEdges };
+  }, [network, showTopOnly, depth1Tiers, selectedTierLevel, selectedTierLevelDepth2, depth2ParentData, selectedDepth2TierLevels, references.length, id]);
 
-      // Separate nodes by depth
-      const level0Nodes = filteredNodes.filter((n: any) => (n.networkDepth ?? n.citationDepth ?? 0) === 0);
-      const level1Nodes = filteredNodes.filter((n: any) => (n.networkDepth ?? n.citationDepth ?? 0) === 1);
-      const level2Nodes = filteredNodes.filter((n: any) => (n.networkDepth ?? n.citationDepth ?? 0) === 2);
-      const otherLevelNodes = filteredNodes.filter((n: any) => (n.networkDepth ?? n.citationDepth ?? 0) > 2);
-
-      console.log(`📊 Before per-ref filtering: L0=${level0Nodes.length}, L1=${level1Nodes.length}, L2=${level2Nodes.length}`);
-
-      // Group level 2 nodes by their parent level 1 node
-      const level2NodesByParent = new Map<number, any[]>();
-
-      // Find edges from level 1 to level 2 nodes
-      filteredEdges.forEach((edge: any) => {
-        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
-
-        const sourceNode = filteredNodes.find((n: any) => n.id === sourceId);
-        const targetNode = filteredNodes.find((n: any) => n.id === targetId);
-
-        if (sourceNode && targetNode) {
-          const sourceDepth = (sourceNode as any).networkDepth ?? (sourceNode as any).citationDepth ?? 0;
-          const targetDepth = (targetNode as any).networkDepth ?? (targetNode as any).citationDepth ?? 0;
-
-          // If edge goes from level 1 to level 2
-          if (sourceDepth === 1 && targetDepth === 2) {
-            if (!level2NodesByParent.has(sourceId)) {
-              level2NodesByParent.set(sourceId, []);
-            }
-            level2NodesByParent.get(sourceId)!.push(targetNode);
-          }
-        }
-      });
-
-      // Apply limit to each parent's level 2 nodes
-      const selectedLevel2NodeIds = new Set<number>();
-
-      level2NodesByParent.forEach((childNodes, parentId) => {
-        if (childNodes.length > perReferenceLevel2Limit) {
-          // Sort by relevance score and take top N
-          const limitedNodes = childNodes
-            .sort((a: any, b: any) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0))
-            .slice(0, perReferenceLevel2Limit);
-
-          limitedNodes.forEach(node => selectedLevel2NodeIds.add(node.id));
-          console.log(`  📝 Parent ${parentId}: ${childNodes.length} → ${limitedNodes.length} level 2 nodes`);
-        } else {
-          // Keep all if within limit
-          childNodes.forEach(node => selectedLevel2NodeIds.add(node.id));
-        }
-      });
-
-      // Filter level 2 nodes to only include selected ones
-      const limitedLevel2Nodes = level2Nodes.filter((node: any) => selectedLevel2NodeIds.has(node.id));
-
-      // Reconstruct filtered nodes
-      filteredNodes = [...level0Nodes, ...level1Nodes, ...limitedLevel2Nodes, ...otherLevelNodes];
-
-      // Filter edges to only include connections to remaining nodes
-      const filteredNodeIds = new Set(filteredNodes.map((n: any) => n.id));
-      filteredEdges = filteredEdges.filter((edge: any) => {
-        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
-        return filteredNodeIds.has(sourceId) && filteredNodeIds.has(targetId);
-      });
-
-      console.log(`📈 After per-ref filtering: ${filteredNodes.length} total nodes (${limitedLevel2Nodes.length} level 2)`);
-    }
-
-    // Update filtered counts
+  // Update filtered counts when filtered data changes
+  useEffect(() => {
     setFilteredCount({ nodes: filteredNodes.length, edges: filteredEdges.length });
+  }, [filteredNodes.length, filteredEdges.length]);
+
+  useEffect(() => {
+    if (!network || !svgRef.current || !containerRef.current) return;
+
+    d3.select(svgRef.current).selectAll('*').remove();
 
     const containerWidth = containerRef.current.clientWidth;
     const width = Math.max(containerWidth - 40, 1200);
@@ -1120,7 +1281,7 @@ const CitationNetworkPage: React.FC = () => {
     return () => {
       if ((svg as any).cleanup) (svg as any).cleanup();
     };
-  }, [network, id, useTreeLayout, selectedTierLevel, references, showTopOnly, usePerReferenceLimits, perReferenceLevel2Limit]);
+  }, [network, id, useTreeLayout, selectedTierLevel, selectedTierLevelDepth2, selectedDepth2TierLevels, depth1Tiers, depth2Tiers, references, showTopOnly]);
 
   const handleZoomIn = () => {
     if (svgRef.current) {
@@ -1257,25 +1418,82 @@ const CitationNetworkPage: React.FC = () => {
           color="default"
           variant="outlined"
         />
-        {showTopOnly && network.tiers && network.tiers.length > 0 ? (
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel>Tier Level</InputLabel>
-            <Select
-              value={selectedTierLevel}
-              label="Tier Level"
-              onChange={(e) => setSelectedTierLevel(Number(e.target.value))}
-            >
-              {network.tiers?.map((tier, index) => {
-                const cumulativeCount = network.tiers!.slice(0, index + 1).reduce((sum, t) => sum + t.nodeCount, 0);
-                return (
-                  <MenuItem key={tier.tier} value={tier.tier}>
-                    Tier 1-{tier.tier} ({cumulativeCount} papers)
-                  </MenuItem>
-                );
-              })}
-              <MenuItem value={0}>All Tiers ({network.tiers?.reduce((sum, t) => sum + t.nodeCount, 0) || 0} papers)</MenuItem>
-            </Select>
-          </FormControl>
+        {showTopOnly && depth1Tiers && depth1Tiers.length > 0 ? (
+          <>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Depth 1 Tier Level</InputLabel>
+              <Select
+                value={selectedTierLevel}
+                label="Depth 1 Tier Level"
+                onChange={(e) => setSelectedTierLevel(Number(e.target.value))}
+              >
+                {depth1Tiers.map((tier) => {
+                  return (
+                    <MenuItem key={tier.tier} value={tier.tier}>
+                      Tier 1-{tier.tier} ({tier.nodeCount} papers)
+                    </MenuItem>
+                  );
+                })}
+                <MenuItem value={0}>All Depth 1 Tiers ({depth1Tiers.reduce((sum, t) => sum + t.nodeCount, 0) || 0} papers)</MenuItem>
+              </Select>
+            </FormControl>
+            {depth2Tiers.length > 0 && (
+              <FormControl size="small" sx={{ minWidth: 140 }}>
+                <InputLabel>Depth 2 Tier Level</InputLabel>
+                <Select
+                  value={selectedTierLevelDepth2}
+                  label="Depth 2 Tier Level"
+                  onChange={(e) => setSelectedTierLevelDepth2(Number(e.target.value))}
+                >
+                  <MenuItem value={0}>None</MenuItem>
+                  {depth2Tiers.map((tier, index) => {
+                    const parentData = depth2ParentData[index];
+                    const parentName = parentData?.parentNode.title?.substring(0, 30) || `Parent ${tier.parentId}`;
+                    return (
+                      <MenuItem key={tier.tier} value={tier.tier}>
+                        Show {tier.tier} parent{tier.tier > 1 ? 's' : ''} ({parentName}...)
+                      </MenuItem>
+                    );
+                  })}
+                  <MenuItem value={depth2Tiers.length}>All Parents ({depth2Tiers.reduce((sum, t) => sum + t.nodeCount, 0)} refs)</MenuItem>
+                </Select>
+              </FormControl>
+            )}
+            {/* Per-parent tier controls */}
+            {selectedTierLevelDepth2 > 0 && depth2ParentData.length > 0 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 1, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+                <Typography variant="caption" color="text.secondary">Per-Parent Tier Selection:</Typography>
+                {depth2ParentData.slice(0, selectedTierLevelDepth2).map((parentData, index) => {
+                  const currentTierLevel = selectedDepth2TierLevels[parentData.parentId] ?? 1;
+                  const parentName = parentData.parentNode.title?.substring(0, 25) || `Parent ${parentData.parentId}`;
+                  return (
+                    <Box key={parentData.parentId} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Typography variant="caption" sx={{ minWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {index + 1}. {parentName}
+                      </Typography>
+                      <FormControl size="small" sx={{ minWidth: 120 }}>
+                        <Select
+                          value={currentTierLevel}
+                          onChange={(e) => setSelectedDepth2TierLevels(prev => ({
+                            ...prev,
+                            [parentData.parentId]: Number(e.target.value)
+                          }))}
+                          sx={{ fontSize: '0.75rem', py: 0.5 }}
+                        >
+                          {parentData.tiers.map((tier) => (
+                            <MenuItem key={tier.tier} value={tier.tier}>
+                              Tier {tier.tier} ({tier.nodeCount})
+                            </MenuItem>
+                          ))}
+                          <MenuItem value={999}>All ({parentData.totalChildren})</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
+          </>
         ) : (
           <Tooltip title="Enable tier selection by adding references">
             <Chip
@@ -1302,61 +1520,6 @@ const CitationNetworkPage: React.FC = () => {
             color="primary"
             variant="outlined"
           />
-        )}
-
-        {/* Per-reference Level 2 Limits Toggle */}
-        <Tooltip title="Toggle between global level 2 limits vs per-reference limits">
-          <Chip
-            icon={<AccountTree />}
-            label={usePerReferenceLimits ? "Per-Reference L2" : "Global L2"}
-            color={usePerReferenceLimits ? "secondary" : "default"}
-            onClick={() => setUsePerReferenceLimits(!usePerReferenceLimits)}
-            sx={{ cursor: 'pointer' }}
-          />
-        </Tooltip>
-
-        {/* Per-reference Level 2 Limit Editor */}
-        {usePerReferenceLimits && (
-          editingPerRefLimit ? (
-            <TextField
-              size="small"
-              type="number"
-              value={tempPerRefLimit}
-              onChange={(e) => setTempPerRefLimit(e.target.value)}
-              onBlur={() => {
-                const value = parseInt(tempPerRefLimit) || 1;
-                const clampedValue = Math.max(1, Math.min(50, value)); // Max 50 per reference
-                setPerReferenceLevel2Limit(clampedValue);
-                setEditingPerRefLimit(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const value = parseInt(tempPerRefLimit) || 1;
-                  const clampedValue = Math.max(1, Math.min(50, value));
-                  setPerReferenceLevel2Limit(clampedValue);
-                  setEditingPerRefLimit(false);
-                } else if (e.key === 'Escape') {
-                  setTempPerRefLimit(perReferenceLevel2Limit.toString());
-                  setEditingPerRefLimit(false);
-                }
-              }}
-              autoFocus
-              inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
-              sx={{ width: 80 }}
-            />
-          ) : (
-            <Tooltip title={`Click to edit max level 2 nodes per reference (max: 50)`}>
-              <Chip
-                label={`L2/Ref: ${perReferenceLevel2Limit}`}
-                color="secondary"
-                onClick={() => {
-                  setTempPerRefLimit(perReferenceLevel2Limit.toString());
-                  setEditingPerRefLimit(true);
-                }}
-                sx={{ cursor: 'pointer' }}
-              />
-            </Tooltip>
-          )
         )}
 
         {/* {references.filter(r => r.isInfluential).length > 0 && (
@@ -1561,7 +1724,7 @@ const CitationNetworkPage: React.FC = () => {
                 {(() => {
                   // Find citation context from references
                   const citation = references.find(
-                    r => r.citedPaper?.id === selectedNode.id
+                    (r: any) => r.citedPaper?.id === selectedNode.id
                   );
                   return citation?.citationContext ? (
                     <>
@@ -1774,7 +1937,7 @@ const CitationNetworkPage: React.FC = () => {
                         startIcon={<Edit />}
                         onClick={() => {
                           const citation = references.find(
-                            r => r.citedPaper?.id === selectedNode.id
+                            (r: any) => r.citedPaper?.id === selectedNode.id
                           );
                           if (citation) {
                             setEditingNode(citation.id);
