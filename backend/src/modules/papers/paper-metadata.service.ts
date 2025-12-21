@@ -1157,71 +1157,8 @@ export class PaperMetadataService {
     // Filter and prioritize references using multi-factor scoring
     let references = data.references || [];
 
-    this.logger.log(`Semantic Scholar returned ${references.length} references`);
-
-    // Log first few references with year data for debugging
-    if (references.length > 0) {
-      this.logger.log(`Sample RAW reference data from S2 API (first 3):`);
-      references.slice(0, 3).forEach((ref: any, idx: number) => {
-        this.logger.log(`  Raw Ref ${idx + 1}:`);
-        this.logger.log(`    title: "${ref.title?.substring(0, 80)}..."`);
-        this.logger.log(`    year field: ${ref.year}`);
-      });
-    }
-
     // Process and score references
     const processedRefs = this.processReferences(references);
-    const currentYear = new Date().getFullYear();
-
-    // Calculate importance score for each reference (0-100)
-    const scoredReferences = processedRefs.map((ref: any) => {
-      let score = 0;
-
-      // 1. Influential papers get highest priority (40 points)
-      if (ref.isInfluential) {
-        score += 40;
-      }
-
-      // 2. Recency score - newer papers (30 points)
-      if (ref.year) {
-        const age = currentYear - ref.year;
-        if (age <= 2) score += 30;        // Very recent (0-2 years)
-        else if (age <= 5) score += 25;   // Recent (3-5 years)
-        else if (age <= 10) score += 15;  // Moderately recent (6-10 years)
-        else if (age <= 20) score += 5;   // Older but relevant (11-20 years)
-        // Older than 20 years: 0 points (unless influential)
-      } else {
-        score += 5; // Small penalty for missing year
-      }
-
-      // 3. Complete metadata (20 points)
-      if (ref.authors && ref.authors.length > 0) score += 10;
-      if (ref.doi) score += 10;
-
-      // 4. Title quality (10 points)
-      if (ref.title && ref.title.length > 20) score += 10;
-
-      return { ...ref, importanceScore: score };
-    });
-
-    // Sort by importance score and keep MORE references (100 instead of 50)
-
-    references = scoredReferences
-      .sort((a: any, b: any) => b.importanceScore - a.importanceScore);
-
-
-    this.logger.log(`📊 Reference Selection Summary:`);
-    this.logger.log(`  ✅ Kept: ${references.length} references`);
-    this.logger.log(`  📈 Quality:`);
-    this.logger.log(`    - Influential: ${references.filter((r: any) => r.isInfluential).length}`);
-    this.logger.log(`    - Recent (≤5yr): ${references.filter((r: any) => r.year && (currentYear - r.year) <= 5).length}`);
-    this.logger.log(`    - With DOI: ${references.filter((r: any) => r.doi).length}`);
-    this.logger.log(`    - With authors: ${references.filter((r: any) => r.authors && r.authors.length > 0).length}`);
-    this.logger.log(`    - Avg score: ${(references.reduce((sum: number, r: any) => sum + r.importanceScore, 0) / references.length).toFixed(1)}`);
-
-    const withYear = references.filter((r: any) => r.year).length;
-    const withoutYear = references.length - withYear;
-    this.logger.log(`  📅 Year: ${withYear} with, ${withoutYear} without`);
 
     return {
       title: data.title || '',
@@ -1232,7 +1169,7 @@ export class PaperMetadataService {
       doi,
       url: data.url || `https://www.semanticscholar.org/paper/${data.paperId || ''}`,
       keywords: data.fieldsOfStudy?.join(', ') || '',
-      references,
+      references: processedRefs,  // ✅ Sử dụng processedRefs thay vì references
     };
   }
 
