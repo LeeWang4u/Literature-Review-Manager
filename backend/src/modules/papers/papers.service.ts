@@ -403,6 +403,7 @@ export class PapersService {
     // Mốc chuẩn (Benchmark): 1000 citations = Đạt điểm tối đa phần citation thường.
 
     const citations = ref.citationCount || 0;
+    
     const influential = ref.influentialCitationCount || 0;
 
     // a. Điểm Citation cơ bản (Max 35 điểm)
@@ -471,7 +472,7 @@ export class PapersService {
       else if (age <= 10) score += 5;   // Khá (5-10 năm)
       // Trên 10 năm: 0 điểm phần này (nhưng đã có điểm citation gánh)
     }
-
+    this.logger.debug(`Score calculation: title="${ref.title?.substring(0, 50)}", normalizedCiteScore=${normalizedCiteScore}, journalScore=${journalScore}`);
     // Làm tròn và đảm bảo không vượt quá 100 (phòng trường hợp edge case)
     return Math.min(100, Math.round(score));
   };

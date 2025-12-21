@@ -78,9 +78,11 @@ const PaperFormPage: React.FC = () => {
   const [arxivMetadata, setArxivMetadata] = useState<any>(null);
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
   const [isSuggestingTags, setIsSuggestingTags] = useState(false);
+  // @ts-ignore - Variable used in future features
   const [tagConfidence, setTagConfidence] = useState<number>(0);
   const [allTagOptions, setAllTagOptions] = useState<TagOption[]>([]);
   const [aiSuggestedTagNames, setAiSuggestedTagNames] = useState<Set<string>>(new Set());
+  // @ts-ignore - Variable used in future features
   const [tempPaperId, setTempPaperId] = useState<number | null>(null);
 
   const [openDialog, setOpenDialog] = useState(false);

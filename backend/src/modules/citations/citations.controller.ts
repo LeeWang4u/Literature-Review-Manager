@@ -101,6 +101,7 @@ export class CitationsController {
     return this.citationsService.remove(id);
   }
 
+  /*
   @Post(':id/auto-rate')
   @ApiOperation({ summary: 'AI auto-rate citation relevance' })
   @ApiResponse({ status: 200, description: 'Citation rated successfully by AI' })
@@ -109,7 +110,9 @@ export class CitationsController {
   autoRateRelevance(@Param('id', ParseIntPipe) id: number) {
     return this.citationsService.autoRateRelevance(id);
   }
+  */
 
+  /*
   @Post('paper/:paperId/auto-rate-all')
   @ApiOperation({ 
     summary: 'AI auto-rate all references for a paper with advanced algorithms',
@@ -124,6 +127,7 @@ export class CitationsController {
   ) {
     return this.citationsService.autoRateAllReferences(paperId, req.user.id);
   }
+  */
 
   @Get('paper/:paperId/analyze')
   @ApiOperation({ 

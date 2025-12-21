@@ -24,8 +24,6 @@ export interface ReferenceAnalysisResult {
       id: number;
       citedPaperId: number;
       relevanceScore: number;
-      isInfluential: boolean;
-      citationContext?: string;
     };
     paper: {
       id: number;

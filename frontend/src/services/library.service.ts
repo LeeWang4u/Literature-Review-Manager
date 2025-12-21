@@ -5,7 +5,6 @@ import {
   Library,
   CreateLibraryData,
   UpdateLibraryData,
-  Paper,
 } from '@/types';
 
 export type LibraryStatus = 'to_read' | 'reading' | 'completed';

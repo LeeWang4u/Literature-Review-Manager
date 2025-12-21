@@ -67,7 +67,6 @@ export class CitationsService {
 
     const citation = this.citationsRepository.create({
       ...createCitationDto,
-      createdBy: userId,
     });
 
     return await this.citationsRepository.save(citation);
@@ -168,12 +167,7 @@ export class CitationsService {
         if (citation.relevanceScore && citation.relevanceScore > maxRelevance) {
           maxRelevance = citation.relevanceScore;
         }
-        if (citation.isInfluential) {
-          isInfluential = true;
-        }
-        if (citation.parsingConfidence && citation.parsingConfidence > maxParsingConfidence) {
-          maxParsingConfidence = citation.parsingConfidence;
-        }
+       
         if (citation.citationDepth !== null && citation.citationDepth !== undefined) {
           citationDepthValue = Math.max(citationDepthValue, citation.citationDepth);
         }
@@ -182,13 +176,7 @@ export class CitationsService {
           source: citation.citingPaperId,
           target: citation.citedPaperId,
           relevanceScore: citation.relevanceScore,
-          isInfluential: citation.isInfluential,
-          citationContext: citation.citationContext,
-          citationDepth: citation.citationDepth,
-          parsingConfidence: citation.parsingConfidence,
-          parsedAuthors: citation.parsedAuthors,
-          parsedTitle: citation.parsedTitle,
-          parsedYear: citation.parsedYear,
+          citationDepth: citation.citationDepth
         });
       }
 
@@ -253,7 +241,170 @@ export class CitationsService {
     console.log(`   Depth 3+ (deep refs): ${nodes.filter(n => n.networkDepth >= 3).length}`);
     console.log('');
 
-    return { nodes, edges };
+    // Compute impact tiers (quantile-based) for direct references (depth 1)
+    const allDepth1Nodes = nodes.filter(n => n.networkDepth === 1);
+    console.log(`🔍 Debug: All depth 1 nodes: ${allDepth1Nodes.length}`);
+    console.log(`   - IDs: ${allDepth1Nodes.map(n => n.id).slice(0, 10).join(', ')}...`);
+
+    const directRefs = allDepth1Nodes.map(ref => ({
+      ...ref,
+      relevanceScore: ref.relevanceScore !== undefined ? ref.relevanceScore : 0
+    }));
+
+    console.log(`🎯 Direct references for tiering: ${directRefs.length}`);
+    console.log(`   - Total depth 1 nodes: ${allDepth1Nodes.length}`);
+    console.log(`   - Depth 1 nodes with original relevanceScore: ${allDepth1Nodes.filter(n => n.relevanceScore !== undefined).length}`);
+    console.log(`   - Depth 1 nodes with assigned relevanceScore (0 for missing): ${directRefs.length}`);
+
+    // Check for duplicates or missing references
+    const totalReferencesFromDB = await this.citationsRepository.count({
+      where: { citingPaperId: paperId }
+    });
+    console.log(`📊 Database check: Total references in DB for paper ${paperId}: ${totalReferencesFromDB}`);
+
+    if (directRefs.length !== totalReferencesFromDB) {
+      console.log(`⚠️ MISMATCH: ${directRefs.length} in network vs ${totalReferencesFromDB} in DB`);
+
+      // Find missing references
+      const dbRefs = await this.citationsRepository.find({
+        where: { citingPaperId: paperId },
+        relations: ['citedPaper']
+      });
+      const networkRefIds = new Set(directRefs.map(r => r.id));
+      const missingRefs = dbRefs.filter(ref => !networkRefIds.has(ref.citedPaperId));
+
+      console.log(`   - Missing references: ${missingRefs.map(r => r.citedPaperId).join(', ')}`);
+    }
+
+    if (directRefs.length > 0) {
+      console.log(`   - Sample relevance scores:`, directRefs.slice(0, 5).map(r => r.relevanceScore));
+    }
+    const tiers = this.computeImpactTiers(directRefs);
+
+    return { nodes, edges, tiers };
+  }
+
+  /**
+   * Compute impact tiers dynamically based on display constraints.
+   *
+   * Core principles:
+   * - References are globally ranked by impactScore (relevanceScore) descending
+   * - Impact tiers are created dynamically to scale with display limits
+   * - Target tier size ensures first few tiers fit within display constraints
+   * - Significant score gaps help determine natural tier boundaries
+   * - Avoids creating tiers per unique score value
+   *
+   * The algorithm creates balanced tiers that work with tier-aware selection,
+   * ensuring semantic integrity while respecting display limits.
+   */
+  private computeImpactTiers(references: any[]): any[] {
+    if (references.length === 0) {
+      return [];
+    }
+
+    console.log(`🔢 Computing dynamic tiers for ${references.length} references`);
+
+    // Sort by relevance score (impact score) descending
+    const sortedRefs = [...references].sort((a, b) =>
+      (b.relevanceScore || 0) - (a.relevanceScore || 0)
+    );
+
+    // Debug: Log sorted scores with IDs
+    console.log('📊 Sorted relevance scores:', sortedRefs.slice(0, Math.min(10, sortedRefs.length)).map(r => ({
+      id: r.id,
+      score: r.relevanceScore
+    })));
+
+    // Dynamic tier creation based on display constraints
+    const tiers = [];
+    const totalRefs = sortedRefs.length;
+
+    // Target tier size based on typical display limits (50 nodes when tiers selected)
+    // Aim for 3-5 tiers that fit within display constraints
+    const maxDisplayLimit = 50; // Matches frontend limit for tiered display
+    const targetTierSize = Math.max(5, Math.min(15, Math.floor(maxDisplayLimit / 3))); // 5-15 nodes per tier
+
+    console.log(`🎯 Target tier size: ${targetTierSize} (max display: ${maxDisplayLimit})`);
+
+    let currentIndex = 0;
+    let tierNum = 1;
+
+    while (currentIndex < totalRefs && tierNum <= 10) { // Max 10 tiers to prevent excessive fragmentation
+      const remainingRefs = totalRefs - currentIndex;
+      const proposedTierSize = Math.min(targetTierSize, remainingRefs);
+
+      // Look for natural breaks based on score gaps
+      let actualTierSize = proposedTierSize;
+      const startScore = sortedRefs[currentIndex].relevanceScore || 0;
+
+      // Check for significant score gaps within the proposed tier
+      for (let i = 1; i < Math.min(proposedTierSize, remainingRefs - 1); i++) {
+        const currentScore = sortedRefs[currentIndex + i].relevanceScore || 0;
+        const nextScore = sortedRefs[currentIndex + i + 1]?.relevanceScore || 0;
+        const gap = currentScore - nextScore;
+
+        // If there's a significant gap (>20% of current score), consider breaking here
+        if (gap > currentScore * 0.2 && i >= 3) { // Minimum 3 nodes per tier
+          actualTierSize = i + 1;
+          console.log(`   📈 Found significant gap at index ${i}: ${currentScore} -> ${nextScore} (gap: ${gap.toFixed(2)})`);
+          break;
+        }
+      }
+
+      // Ensure we don't create tiers smaller than 2 (unless it's the last tier)
+      if (actualTierSize < 2 && currentIndex + actualTierSize < totalRefs) {
+        actualTierSize = Math.min(proposedTierSize, remainingRefs);
+      }
+
+      const endIndex = currentIndex + actualTierSize;
+      const tierRefs = sortedRefs.slice(currentIndex, endIndex);
+      const nodeIds = tierRefs.map(ref => ref.id).filter(id => id !== undefined && id !== null);
+
+      // Calculate score range for this tier
+      const minScoreValue = Number(tierRefs[tierRefs.length - 1].relevanceScore) || 0;
+      const maxScoreValue = Number(tierRefs[0].relevanceScore) || 0;
+
+      const tier = {
+        tier: tierNum,
+        minScore: parseFloat(minScoreValue.toFixed(2)),
+        maxScore: parseFloat(maxScoreValue.toFixed(2)),
+        nodeIds,
+        nodeCount: nodeIds.length,
+        label: `Tier ${tierNum} (${minScoreValue.toFixed(1)}-${maxScoreValue.toFixed(1)})`,
+        // Remove quintile reference as it's no longer fixed
+      };
+
+      tiers.push(tier);
+      console.log(`   Tier ${tier.tier}: ${tierRefs.length} refs (${currentIndex}-${endIndex-1}), scores ${minScoreValue.toFixed(2)}-${maxScoreValue.toFixed(2)}, nodeCount: ${nodeIds.length}`);
+
+      currentIndex = endIndex;
+      tierNum++;
+
+      // Safety check: if we've created too many tiers or the tier is getting too small, stop
+      if (tier.nodeCount < 2 && currentIndex < totalRefs) {
+        // Merge remaining into last tier
+        console.log(`   🛑 Stopping tier creation: remaining ${totalRefs - currentIndex} refs too few for new tier`);
+        break;
+      }
+    }
+
+    // If there are remaining references, add them to the last tier
+    if (currentIndex < totalRefs) {
+      const lastTier = tiers[tiers.length - 1];
+      const remainingRefs = sortedRefs.slice(currentIndex);
+      const remainingNodeIds = remainingRefs.map(ref => ref.id).filter(id => id !== undefined && id !== null);
+
+      lastTier.nodeIds.push(...remainingNodeIds);
+      lastTier.nodeCount += remainingNodeIds.length;
+      lastTier.minScore = Math.min(lastTier.minScore, Number(remainingRefs[remainingRefs.length - 1].relevanceScore) || 0);
+      lastTier.label = `Tier ${lastTier.tier} (${lastTier.minScore.toFixed(1)}-${lastTier.maxScore.toFixed(1)})`;
+
+      console.log(`   📎 Merged ${remainingRefs.length} remaining refs into Tier ${lastTier.tier} (Total: ${lastTier.nodeCount})`);
+    }
+
+    console.log(`📊 Final result: ${tiers.length} dynamic tiers created (${totalRefs} total references)`);
+    console.log(`   Tier sizes: ${tiers.map(t => t.nodeCount).join(', ')}`);
+    return tiers;
   }
 
   async debugCitations(paperId: number) {
@@ -284,7 +435,6 @@ export class CitationsService {
         citedId: c.citedPaperId,
         citedTitle: c.citedPaper?.title,
         relevanceScore: c.relevanceScore,
-        isInfluential: c.isInfluential,
       })),
       citationsIn: citationsIn.map(c => ({
         id: c.id,
@@ -293,7 +443,7 @@ export class CitationsService {
         citedId: c.citedPaperId,
         citedTitle: c.citedPaper?.title,
         relevanceScore: c.relevanceScore,
-        isInfluential: c.isInfluential,
+    
       })),
     };
   }
@@ -347,7 +497,7 @@ export class CitationsService {
       where: { citingPaperId: paperId },
       relations: ['citedPaper'],
       order: {
-        isInfluential: 'DESC',
+     
         relevanceScore: 'DESC',
       },
     });
@@ -373,7 +523,7 @@ export class CitationsService {
       where: { citedPaperId: paperId },
       relations: ['citingPaper'],
       order: {
-        isInfluential: 'DESC',
+      
         relevanceScore: 'DESC',
       },
     });
@@ -406,10 +556,6 @@ export class CitationsService {
       citation.relevanceScore = updateCitationDto.relevanceScore;
     }
 
-    if (updateCitationDto.citationContext !== undefined) {
-      citation.citationContext = updateCitationDto.citationContext;
-    }
-
     return await this.citationsRepository.save(citation);
   }
 
@@ -417,6 +563,7 @@ export class CitationsService {
    * AI-powered relevance scoring for a citation
    * Analyzes the relationship between citing and cited papers
    */
+  /*
   async autoRateRelevance(citationId: number): Promise<Citation> {
     if (!this.model) {
       throw new BadRequestException('AI service is not configured. Please set GEMINI_API_KEY.');
@@ -557,10 +704,12 @@ Where:
       throw new BadRequestException('Failed to generate AI relevance score. Please try again or rate manually.');
     }
   }
+  */
 
   /**
    * Batch AI rating for all citations of a paper
    */
+  /*
   async autoRateAllReferences(paperId: number, userId: number): Promise<{ rated: number; failed: number; citations: Citation[] }> {
     const citations = await this.getReferences(paperId);
     
@@ -586,6 +735,7 @@ Where:
     console.log(`\n✅ COMPLETED: ${rated} rated, ${failed} failed\n`);
     return { rated, failed, citations: results };
   }
+  */
 
   /**
    * Truncate content to fit within token limits
@@ -629,7 +779,6 @@ Where:
       where: { citingPaperId: paperId },
       relations: ['citedPaper', 'citedPaper.pdfFiles'],
       order: {
-        isInfluential: 'DESC',
         relevanceScore: 'DESC',
       },
     });
@@ -701,8 +850,7 @@ Where:
             id: citation.id,
             citedPaperId: citedPaper.id,
             relevanceScore: citation.relevanceScore || 0,
-            isInfluential: citation.isInfluential || false,
-            citationContext: citation.citationContext,
+           
           },
           paper: {
             id: citedPaper.id,
@@ -738,7 +886,7 @@ Where:
 
     // Filter by minimum relevance and sort by score
     const filteredReferences = scoredReferences
-      .filter(ref => ref.citation.relevanceScore >= minRelevance || ref.citation.isInfluential)
+      .filter(ref => ref.citation.relevanceScore >= minRelevance)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
 
@@ -752,7 +900,6 @@ Where:
     
     const shouldDownload = scoredReferences.filter(ref => 
       (ref.score >= 0.6 || 
-       ref.citation.isInfluential || 
        ref.centrality.inDegree >= 3 ||
        (ref.impactPotential?.score >= 60)) && // 🆕 High potential
       !ref.paper.hasPdf

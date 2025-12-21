@@ -57,6 +57,7 @@ export const citationService = {
     await axiosInstance.delete(`/citations/${id}`);
   },
 
+  /*
   // AI auto-rate single citation
   autoRate: async (id: number): Promise<Citation> => {
     const response = await axiosInstance.post<Citation>(`/citations/${id}/auto-rate`);
@@ -68,6 +69,7 @@ export const citationService = {
     const response = await axiosInstance.post(`/citations/paper/${paperId}/auto-rate-all`);
     return response.data;
   },
+  */
 
   // Analyze references and get top recommendations
   analyzeReferences: async (paperId: number, options?: { limit?: number; minRelevance?: number }): Promise<any> => {

@@ -113,14 +113,10 @@ export class Paper {
   @OneToMany(() => PdfFile, (pdf) => pdf.paper)
   pdfFiles: PdfFile[];
 
-  // @ApiHideProperty()
-  // @ApiProperty({ type: () => [Citation] })
   @ApiProperty({ type: () => Citation, isArray: true })
   @OneToMany(() => Citation, (citation) => citation.citingPaper)
   citations: Citation[];
 
-  // @ApiHideProperty()
-  // @ApiProperty({ type: () => [Citation] })
   @ApiProperty({ type: () => Citation, isArray: true })
   @OneToMany(() => Citation, (citation) => citation.citedPaper)
   citedBy: Citation[];

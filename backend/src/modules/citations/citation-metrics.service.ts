@@ -92,12 +92,12 @@ export class CitationMetricsService {
     }
 
     // 5. Citation Frequency (5% weight) - How often cited in citing paper
-    if (citation.citationContext) {
-      // Estimate from context length and depth
-      const frequencyScore = Math.min(citation.citationContext.length / 500, 1.0);
-      breakdown.citationFrequency = frequencyScore * 0.05;
-      totalScore += breakdown.citationFrequency;
-    }
+    // if (citation.citationContext) {
+    //   // Estimate from context length and depth
+    //   const frequencyScore = Math.min(citation.citationContext.length / 500, 1.0);
+    //   breakdown.citationFrequency = frequencyScore * 0.05;
+    //   totalScore += breakdown.citationFrequency;
+    // }
 
     // 6. Depth Penalty (5% weight) - Penalize deep citations
     // Direct citation (depth 0) = 1.0, depth 1 = 0.7, depth 2 = 0.5, depth 3+ = 0.3
@@ -117,11 +117,8 @@ export class CitationMetricsService {
    * Returns score 0-1 based on positive sentiment and relevance indicators
    */
   private async analyzeContextQuality(citation: Citation): Promise<number> {
-    if (!citation.citationContext) {
-      return 0.5; // Neutral if no context
-    }
-
-    const context = citation.citationContext.toLowerCase();
+   
+   
     let score = 0.5; // Start neutral
 
     // Positive indicators (+0.1 each, max +0.5)
@@ -147,17 +144,17 @@ export class CitationMetricsService {
     let negativeCount = 0;
     let methodCount = 0;
 
-    positiveKeywords.forEach(keyword => {
-      if (context.includes(keyword)) positiveCount++;
-    });
+    // positiveKeywords.forEach(keyword => {
+    //   if (context.includes(keyword)) positiveCount++;
+    // });
 
-    negativeKeywords.forEach(keyword => {
-      if (context.includes(keyword)) negativeCount++;
-    });
+    // negativeKeywords.forEach(keyword => {
+    //   if (context.includes(keyword)) negativeCount++;
+    // });
 
-    methodKeywords.forEach(keyword => {
-      if (context.includes(keyword)) methodCount++;
-    });
+    // methodKeywords.forEach(keyword => {
+    //   if (context.includes(keyword)) methodCount++;
+    // });
 
     // Calculate sentiment score
     score += Math.min(positiveCount * 0.1, 0.5);
@@ -165,9 +162,9 @@ export class CitationMetricsService {
     score += Math.min(methodCount * 0.15, 0.3);
 
     // Influential flag override
-    if (citation.isInfluential) {
-      score = Math.max(score, 0.8);
-    }
+    // if (citation.isInfluential) {
+    //   score = Math.max(score, 0.8);
+    // }
 
     return Math.max(0, Math.min(score, 1.0));
   }
@@ -333,12 +330,10 @@ export class CitationMetricsService {
       mentionCount: 0,
     };
 
-    if (!citingPaper.fullText || !citation.citationContext) {
-      return result;
-    }
+
 
     const fullText = citingPaper.fullText.toLowerCase();
-    const context = citation.citationContext.toLowerCase();
+   
 
     // 1. Extract cited author for mention tracking
     const citedPaper = await this.papersRepository.findOne({
@@ -366,20 +361,6 @@ export class CitationMetricsService {
       discussion: fullText.substring(Math.floor(textLength * 0.75)),
     };
 
-    // Score by section importance
-    let locationScore = 0;
-    if (sections.introduction.includes(context.substring(0, 50))) {
-      locationScore = 1.0; // Most important
-    } else if (sections.methods.includes(context.substring(0, 50))) {
-      locationScore = 0.9; // Very important
-    } else if (sections.results.includes(context.substring(0, 50))) {
-      locationScore = 0.7; // Important
-    } else if (sections.discussion.includes(context.substring(0, 50))) {
-      locationScore = 0.6; // Moderately important
-    } else {
-      locationScore = 0.5; // Default
-    }
-    result.locationScore = locationScore;
 
     // 4. Proximity to research objectives/methods keywords
     const keyPhrases = [
@@ -387,15 +368,6 @@ export class CitationMetricsService {
       'method', 'approach', 'technique', 'framework', 'model',
       'hypothesis', 'theory', 'contribution', 'findings', 'conclusion'
     ];
-
-    let proximityMatches = 0;
-    keyPhrases.forEach(phrase => {
-      if (context.includes(phrase)) {
-        proximityMatches++;
-      }
-    });
-
-    result.proximityScore = Math.min(proximityMatches / 5, 1.0);
 
     return result;
   }

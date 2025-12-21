@@ -56,6 +56,7 @@ export interface CreatePaperData {
   url?: string;
   keywords?: string[];
   tagIds?: number[];
+  isReference?: boolean;
   references?: {
     title: string;
     authors?: string;
@@ -220,6 +221,15 @@ export interface CitationNetwork {
   edges: {
     source: number;
     target: number;
+  }[];
+  tiers?: {
+    tier: number;
+    minScore: number;
+    maxScore: number;
+    nodeIds: number[];
+    nodeCount: number;
+    label: string;
+    quintile?: string; // "Top 20%", "Top 40%", etc.
   }[];
 }
 

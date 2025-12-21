@@ -212,6 +212,7 @@ export class PapersController {
     return this.papersService.getUserLibrary(req.user.id, status, favorite);
   }
 
+  /*
   @Post(':id/auto-rate-references')
   @ApiOperation({ summary: 'Auto-rate all references of a paper using AI' })
   @ApiResponse({ status: 200, description: 'References auto-rated successfully' })
@@ -221,6 +222,7 @@ export class PapersController {
   ) {
     return this.citationsService.autoRateAllReferences(id, req.user.id);
   }
+  */
 
   @Post(':id/fetch-references')
   @ApiOperation({ summary: 'Manually fetch and process references for any paper' })
