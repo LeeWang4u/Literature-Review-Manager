@@ -22,6 +22,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaperMetadataService } from './paper-metadata.service';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 import { CitationsService } from '../citations/citations.service';
+import { LibrariesService } from '../libraries/libraries.service';
 
 @ApiTags('Papers')
 @Controller('papers')
@@ -32,6 +33,7 @@ export class PapersController {
     private papersService: PapersService,
     private paperMetadataService: PaperMetadataService,
     private citationsService: CitationsService,
+    private librariesService: LibrariesService,
   ) { }
 
   @Post('extract-metadata')
@@ -313,6 +315,16 @@ export class PapersController {
     @Request() req,
   ) {
     return this.papersService.toggleFavorite(id, favorite, req.user.id);
+  }
+
+  @Get(':paperId/libraries')
+  @ApiOperation({ summary: 'Get all libraries that contain this paper' })
+  @ApiResponse({ status: 200, description: 'Libraries retrieved successfully' })
+  async getLibrariesForPaper(
+    @Param('paperId', ParseIntPipe) paperId: number,
+    @Request() req,
+  ) {
+    return this.librariesService.getLibrariesForPaper(paperId, req.user.id);
   }
 
 }
