@@ -44,6 +44,7 @@ export interface Paper {
   updatedAt: string;
   status: 'to_read' | 'reading' | 'completed';
   favorite: boolean;
+  isReference?: boolean;
 }
 
 export interface CreatePaperData {

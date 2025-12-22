@@ -200,6 +200,19 @@ export class PapersController {
     return await this.papersService.updateStatus(id, dto, req.user.id);
   }
 
+  @Post(':id/convert-to-research')
+  @ApiOperation({ summary: 'Convert reference paper to research paper' })
+  @ApiResponse({ status: 200, description: 'Paper converted successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - not owner' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  @ApiResponse({ status: 409, description: 'Already a research paper' })
+  async convertToResearch(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req,
+  ) {
+    return await this.papersService.convertReferenceToResearch(id, req.user.id);
+  }
+
 
   @Get('library')
   @ApiOperation({ summary: 'Get all papers in user library (filterable)' })

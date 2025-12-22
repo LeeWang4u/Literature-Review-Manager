@@ -34,6 +34,12 @@ export class ReferenceDto {
   @MaxLength(1000)
   citationContext?: string;
 
+  // abstract
+  @ApiProperty({ example: 'In this paper, we propose a novel attention mechanism...', required: false })
+  @IsString()
+  @IsOptional()
+  abstract?: string;
+
   @ApiProperty({ example: 0.85, required: false, description: 'Relevance score (0-1) indicating how related this reference is to the main paper' })
   @IsNumber()
   @IsOptional()

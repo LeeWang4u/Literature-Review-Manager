@@ -66,14 +66,17 @@ export class PapersService {
         this.logger.log(`      Authors: ${ref.authors || 'N/A'}`);
         this.logger.log(`      Year: ${ref.year || 'N/A'}`);
         this.logger.log(`      DOI: ${ref.doi || 'N/A'}`);
+        this.logger.log(`      Abstract: ${ref.abstract ? `${ref.abstract.substring(0, 50)}...` : 'N/A'}`);
       });
       const withYear = references.filter((r: any) => r.year).length;
       const withDOI = references.filter((r: any) => r.doi).length;
       const withAuthors = references.filter((r: any) => r.authors).length;
+      const withAbstract = references.filter((r: any) => r.abstract).length;
       this.logger.log(`   Data completeness:`);
       this.logger.log(`     - With year: ${withYear}/${references.length}`);
       this.logger.log(`     - With DOI: ${withDOI}/${references.length}`);
       this.logger.log(`     - With authors: ${withAuthors}/${references.length}`);
+      this.logger.log(`     - With abstract: ${withAbstract}/${references.length}`);
     } else {
       this.logger.log(`\n📚 REFERENCES: None provided`);
     }
@@ -90,7 +93,11 @@ export class PapersService {
       });
 
       if (existingByDoi) {
-        throw new ConflictException('A paper with this DOI already exists in your library');
+        // Return existing paper ID for FE to redirect
+        throw new ConflictException({
+          message: 'A paper with this DOI already exists in your library',
+          existingPaperId: existingByDoi.id,
+        });
       }
     }
 
@@ -104,7 +111,11 @@ export class PapersService {
       });
 
       if (existingByUrl) {
-        throw new ConflictException('A paper with this URL already exists in your library');
+        // Return existing paper ID for FE to redirect
+        throw new ConflictException({
+          message: 'A paper with this URL already exists in your library',
+          existingPaperId: existingByUrl.id,
+        });
       }
     }
 
@@ -127,11 +138,15 @@ export class PapersService {
         .add(tagIds);
     }
 
-    // 🔥 Auto-download PDF from ArXiv if URL is ArXiv
+    // 🔥 Auto-download PDF from ArXiv if URL is ArXiv - WAIT for completion
     if (paperData.url && paperData.url.includes('arxiv.org')) {
-      this.autoDownloadArxivPdf(savedPaper.id, paperData.url, userId).catch(err => {
+      try {
+        await this.autoDownloadArxivPdf(savedPaper.id, paperData.url, userId);
+        this.logger.log(`✅ ArXiv PDF downloaded successfully for paper ${savedPaper.id}`);
+      } catch (err) {
         this.logger.error(`Failed to auto-download ArXiv PDF for paper ${savedPaper.id}: ${err.message}`);
-      });
+        // Don't throw - paper is already created, PDF download is a bonus feature
+      }
     }
 
     // Xử lý references với AI parsing và auto-download workflow
@@ -164,7 +179,8 @@ export class PapersService {
     return {
       success: true,
       message: 'Paper created successfully. References are being processed in background.',
-      data: await this.findOne(savedPaper.id, userId)
+      data: await this.findOne(savedPaper.id, userId)//,
+     // paperId: savedPaper.id, // Add paper ID for FE to redirect
     };
   }
 
@@ -394,7 +410,8 @@ export class PapersService {
 
   private calculatePriorityScore = (ref: any): number => {
     let score = 0;
-
+    
+    this.logger.debug(`\nCalculating priority score for reference: "${ref.title?.substring(0, 50)}..."`);
     // -----------------------------------------------------------
     // 1. IMPACT SCORE (Tối đa 50 điểm) - QUAN TRỌNG NHẤT
     // -----------------------------------------------------------
@@ -403,21 +420,27 @@ export class PapersService {
     // Mốc chuẩn (Benchmark): 1000 citations = Đạt điểm tối đa phần citation thường.
 
     const citations = ref.citationCount || 0;
-    
+
     const influential = ref.influentialCitationCount || 0;
 
     // a. Điểm Citation cơ bản (Max 35 điểm)
     // log10(1000) = 3. Do đó chia cho 3 để chuẩn hóa về 0-1, rồi nhân 35.
-    const rawCiteScore = Math.log10(citations + 1);
-    const normalizedCiteScore = Math.min(1, rawCiteScore / 3);
-    score += normalizedCiteScore * 35;
+    if (citations > 0) {
+      const rawCiteScore = Math.log10(citations);
+      const normalizedCiteScore = Math.min(1, rawCiteScore / 3);
+      score += normalizedCiteScore * 35;
+      this.logger.debug(`  Citation count: ${citations}, rawCiteScore: ${rawCiteScore.toFixed(2)}, normalizedCiteScore: ${normalizedCiteScore.toFixed(2)}, points: ${(normalizedCiteScore * 35).toFixed(2)}`);
+    }
 
     // b. Điểm Influential Citation (Max 15 điểm)
     // Influential citations là "phiếu bầu chất lượng cao".
     // Mốc chuẩn: 50 influential citations = Max điểm.
-    const rawInfScore = Math.log10(influential + 1);
-    const normalizedInfScore = Math.min(1, rawInfScore / 1.7); // log10(50) approx 1.7
-    score += normalizedInfScore * 15;
+    if (influential > 0) {
+      const rawInfScore = Math.log10(influential );
+      const normalizedInfScore = Math.min(1, rawInfScore / 2); // log10(100) approx 2
+      score += normalizedInfScore * 20;
+      this.logger.debug(`  Influential citations: ${influential}, rawInfScore: ${rawInfScore.toFixed(2)}, normalizedInfScore: ${normalizedInfScore.toFixed(2)}, points: ${(normalizedInfScore * 20).toFixed(2)}`);
+    }
 
 
     // -----------------------------------------------------------
@@ -443,18 +466,20 @@ export class PapersService {
 
     const journalScore = this.getJournalScore(ref.venue);
     score += journalScore;
+    this.logger.debug(`  Venue: "${ref.venue || 'N/A'}", journalScore: ${journalScore}`);
 
 
     // -----------------------------------------------------------
     // 3. METADATA COMPLETENESS (Tối đa 15 điểm)
     // -----------------------------------------------------------
     // Với Literature Review, Abstract là thứ quan trọng nhất để đọc lướt.
-    if (ref.abstract && ref.abstract.length > 50) {
-      score += 5;
-    }
-    // Có DOI hoặc Link PDF giúp truy xuất nguồn gốc dễ dàng
-    if (ref.doi || ref.isOpenAccess || ref.url) {
+    // if (ref.abstract && ref.abstract.length > 50) {
+    //   score += 5;
+    // }
+    // Có DOI hoặc Link PDF giúp truy xuất nguồn gốc dễ dàng || ref.isOpenAccess 
+    if (ref.doi || ref.url) {
       score += 10;
+      this.logger.debug(`  Has DOI or URL, +10 points`);
     }
 
 
@@ -472,7 +497,8 @@ export class PapersService {
       else if (age <= 10) score += 5;   // Khá (5-10 năm)
       // Trên 10 năm: 0 điểm phần này (nhưng đã có điểm citation gánh)
     }
-    this.logger.debug(`Score calculation: title="${ref.title?.substring(0, 50)}", normalizedCiteScore=${normalizedCiteScore}, journalScore=${journalScore}`);
+    this.logger.debug(`  Publication year: ${ref.year || 'N/A'}, age: ${ref.year ? new Date().getFullYear() - ref.year : 'N/A'}, points: ${score}`);
+    //this.logger.debug(`Score calculation: title="${ref.title?.substring(0, 50)}", normalizedCiteScore=${normalizedCiteScore}, journalScore=${journalScore}`);
     // Làm tròn và đảm bảo không vượt quá 100 (phòng trường hợp edge case)
     return Math.min(100, Math.round(score));
   };
@@ -548,7 +574,7 @@ export class PapersService {
       .filter(r => r.title && r.title.trim() !== '')
       .sort((a, b) => b.priorityScore - a.priorityScore);
 
-    
+
 
     // Step 3: Process and save citations
     let savedCount = 0;
@@ -842,6 +868,40 @@ export class PapersService {
 
     if (dto.status !== undefined) paper.status = dto.status;
     if (dto.favorite !== undefined) paper.favorite = dto.favorite;
+
+    return await this.papersRepository.save(paper);
+  }
+
+  async convertReferenceToResearch(id: number, userId: number): Promise<Paper> {
+    const paper = await this.papersRepository.findOne({ 
+      where: { id },
+      relations: ['tags']
+    });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    if (paper.addedBy !== userId) {
+      throw new ForbiddenException('You are not the owner of this paper');
+    }
+
+    if (!paper.isReference) {
+      throw new ConflictException('This paper is already a research paper');
+    }
+
+    // Convert to research paper
+    paper.isReference = false;
+
+    // Auto-add to default library
+    try {
+      const defaultLibrary = await this.librariesService.createDefaultLibrary(userId);
+      await this.librariesService.addPaperToLibrary(defaultLibrary.id, paper.id, userId);
+      this.logger.log(`Paper ${paper.id} automatically added to default library ${defaultLibrary.id}`);
+    } catch (error) {
+      this.logger.warn(`Failed to add paper ${paper.id} to default library: ${error.message}`);
+      // Don't throw error, just log it
+    }
 
     return await this.papersRepository.save(paper);
   }

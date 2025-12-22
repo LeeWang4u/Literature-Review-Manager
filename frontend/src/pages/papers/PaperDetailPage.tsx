@@ -22,7 +22,7 @@ import {
 } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
-import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, ArrowBack, FolderOpen } from '@mui/icons-material';
+import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, ArrowBack, FolderOpen, TransformOutlined } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { pdfService } from '@/services/pdf.service';
@@ -79,6 +79,8 @@ const PaperDetailPage: React.FC = () => {
     queryKey: ['pdfs', id],
     queryFn: () => pdfService.getByPaper(Number(id)),
     enabled: !!id,
+    refetchOnMount: 'always',  // Always refetch when component mounts
+    staleTime: 0,  // Data is immediately stale, allowing refetch
   });
 
   // Fetch notes count for this paper
@@ -113,6 +115,21 @@ const PaperDetailPage: React.FC = () => {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || 'Failed to delete paper');
+    },
+  });
+
+  // Convert reference to research paper mutation
+  const convertMutation = useMutation({
+    mutationFn: () => paperService.convertToResearch(Number(id)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['paper', id] });
+      queryClient.invalidateQueries({ queryKey: ['papers'] });
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+      queryClient.invalidateQueries({ queryKey: ['library-statistics'] });
+      toast.success('Paper converted to research paper and added to default library!');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Failed to convert paper');
     },
   });
 
@@ -236,14 +253,26 @@ const PaperDetailPage: React.FC = () => {
                 {paper.title}
               </Typography>
               <Box display="flex" gap={1}>
-                <Tooltip title="Add to Library">
-                  <IconButton
-                    color="primary"
-                    onClick={() => setShowLibraryModal(true)}
-                  >
-                    <FolderOpen />
-                  </IconButton>
-                </Tooltip>
+                {paper.isReference ? (
+                  <Tooltip title="Convert to Research Paper">
+                    <IconButton
+                      color="success"
+                      onClick={() => convertMutation.mutate()}
+                      disabled={convertMutation.isPending}
+                    >
+                      <TransformOutlined />
+                    </IconButton>
+                  </Tooltip>
+                ) : (
+                  <Tooltip title="Add to Library">
+                    <IconButton
+                      color="primary"
+                      onClick={() => setShowLibraryModal(true)}
+                    >
+                      <FolderOpen />
+                    </IconButton>
+                  </Tooltip>
+                )}
                 <Tooltip title="Edit Paper">
                   <IconButton
                     color="primary"
