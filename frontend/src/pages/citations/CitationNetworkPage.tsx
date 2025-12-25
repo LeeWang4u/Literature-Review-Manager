@@ -115,6 +115,7 @@ interface NodeData {
   year: number;
   authors: string[];
   doi?: string;
+  url?: string;
   isInfluential?: boolean;
   relevanceScore?: number;
   isReference?: boolean;
@@ -539,7 +540,7 @@ const CitationNetworkPage: React.FC = () => {
           console.log(`   📄 Parent ${index + 1} (ID: ${parentId}): selecting tier level ${parentTierLevel}`);
 
           // Select nodes from this parent's tiers up to parentTierLevel
-          let parentSelectedCount = 0;
+          const beforeParentSize = selectedNodeIds.size;
           const maxTierLevel = parentData.tiers.length;
           const effectiveTierLevel = parentTierLevel >= 999 ? maxTierLevel : parentTierLevel;
 
@@ -547,13 +548,13 @@ const CitationNetworkPage: React.FC = () => {
             if (tier.tier <= effectiveTierLevel) {
               tier.nodeIds.forEach((id: number) => {
                 selectedNodeIds.add(id);
-                parentSelectedCount++;
               });
             }
           }
 
+          const parentSelectedCount = selectedNodeIds.size - beforeParentSize;
           depth2Count += parentSelectedCount;
-          console.log(`      ✅ Selected ${parentSelectedCount} children from ${parentData.tiers.length} tier(s)`);
+          console.log(`      ✅ Selected ${parentSelectedCount} unique children from ${parentData.tiers.length} tier(s)`);
         });
       }
 
@@ -1427,10 +1428,12 @@ const CitationNetworkPage: React.FC = () => {
                 label="Depth 1 Tier Level"
                 onChange={(e) => setSelectedTierLevel(Number(e.target.value))}
               >
-                {depth1Tiers.map((tier) => {
+                {depth1Tiers.map((tier, index) => {
+                  // Tính số lượng cộng dồn từ tier 1 đến tier hiện tại
+                  const cumulativeCount = depth1Tiers.slice(0, index + 1).reduce((sum, t) => sum + t.nodeCount, 0);
                   return (
                     <MenuItem key={tier.tier} value={tier.tier}>
-                      Tier 1-{tier.tier} ({tier.nodeCount} papers)
+                      Tier 1-{tier.tier} ({cumulativeCount} papers)
                     </MenuItem>
                   );
                 })}
@@ -1449,13 +1452,21 @@ const CitationNetworkPage: React.FC = () => {
                   {depth2Tiers.map((tier, index) => {
                     const parentData = depth2ParentData[index];
                     const parentName = parentData?.parentNode.title?.substring(0, 30) || `Parent ${tier.parentId}`;
+                    // Tính tổng số unique children thực tế (all tiers) của N parents đầu tiên
+                    const uniqueNodeIds = new Set<number>();
+                    depth2ParentData.slice(0, tier.tier).forEach(parent => {
+                      // Lấy tất cả children từ tất cả tiers của parent
+                      parent.children.forEach((child: any) => {
+                        uniqueNodeIds.add(child.id);
+                      });
+                    });
+                    const totalRefs = uniqueNodeIds.size;
                     return (
                       <MenuItem key={tier.tier} value={tier.tier}>
-                        Show {tier.tier} parent{tier.tier > 1 ? 's' : ''} ({parentName}...)
+                        Show {tier.tier} parent{tier.tier > 1 ? 's' : ''} ({totalRefs} refs)
                       </MenuItem>
                     );
                   })}
-                  <MenuItem value={depth2Tiers.length}>All Parents ({depth2Tiers.reduce((sum, t) => sum + t.nodeCount, 0)} refs)</MenuItem>
                 </Select>
               </FormControl>
             )}
@@ -1480,12 +1491,19 @@ const CitationNetworkPage: React.FC = () => {
                           }))}
                           sx={{ fontSize: '0.75rem', py: 0.5 }}
                         >
-                          {parentData.tiers.map((tier) => (
-                            <MenuItem key={tier.tier} value={tier.tier}>
-                              Tier {tier.tier} ({tier.nodeCount})
-                            </MenuItem>
-                          ))}
-                          <MenuItem value={999}>All ({parentData.totalChildren})</MenuItem>
+                          {parentData.tiers.map((tier, tierIndex) => {
+                            // Tính số lượng unique nodes từ tier 1 đến tier hiện tại của parent
+                            const uniqueNodeIds = new Set<number>();
+                            parentData.tiers.slice(0, tierIndex + 1).forEach(t => {
+                              t.nodeIds.forEach((id: number) => uniqueNodeIds.add(id));
+                            });
+                            const cumulativeCount = uniqueNodeIds.size;
+                            return (
+                              <MenuItem key={tier.tier} value={tier.tier}>
+                                Tier {tier.tier} ({cumulativeCount})
+                              </MenuItem>
+                            );
+                          })}
                         </Select>
                       </FormControl>
                     </Box>
@@ -1814,6 +1832,47 @@ const CitationNetworkPage: React.FC = () => {
                           window.open(`https://doi.org/${selectedNode.doi}`, '_blank');
                         }}
                         title="Open DOI link"
+                      >
+                        <OpenInNew fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </Box>
+                )}
+
+                {/* URL Information */}
+                {selectedNode.url && (
+                  <Box mt={2}>
+                    <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                      🔗 URL
+                    </Typography>
+                    <Box
+                      sx={{
+                        p: 1,
+                        bgcolor: 'rgba(33, 150, 243, 0.08)',
+                        borderRadius: 1,
+                        border: '1px solid rgba(33, 150, 243, 0.3)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                      }}
+                    >
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontFamily: 'monospace',
+                          fontSize: '0.85rem',
+                          wordBreak: 'break-all',
+                          flex: 1,
+                        }}
+                      >
+                        {selectedNode.url}
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          window.open(selectedNode.url, '_blank');
+                        }}
+                        title="Open URL"
                       >
                         <OpenInNew fontSize="small" />
                       </IconButton>
