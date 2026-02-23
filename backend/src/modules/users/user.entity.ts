@@ -9,7 +9,6 @@ import {
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { Paper } from '../papers/paper.entity';
-import { UserLibrary } from '../library/user-library.entity';
 import { Note } from '../notes/note.entity';
 import { Citation } from '../citations/citation.entity';
 import { PdfFile } from '../pdf/pdf-file.entity';
@@ -32,15 +31,6 @@ export class User {
 
   @Column({ name: 'avatar_url', length: 500, nullable: true })
   avatarUrl: string;
-
-  @Column({ type: 'text', nullable: true })
-  bio: string;
-
-  @Column({ length: 255, nullable: true })
-  affiliation: string;
-
-  @Column({ name: 'research_interests', type: 'text', nullable: true })
-  researchInterests: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
@@ -65,6 +55,4 @@ export class User {
   @OneToMany(() => Tag, (tag) => tag.owner)
   tags: Tag[];
 
-  @OneToMany(() => UserLibrary, (library) => library.user)
-  library: UserLibrary[];
 }

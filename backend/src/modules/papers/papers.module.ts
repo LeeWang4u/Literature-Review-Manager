@@ -7,17 +7,16 @@ import { PapersService } from './papers.service';
 import { PapersController } from './papers.controller';
 import { PaperMetadataService } from './paper-metadata.service';
 import { CitationsModule } from '../citations/citations.module';
-import { LibraryService } from '../library/library.service';
-import { LibraryModule } from '../library/library.module';
 import { PdfModule } from '../pdf/pdf.module';
 import { SummariesModule } from '../summaries/summaries.module';
+import { LibrariesModule } from '../libraries/libraries.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Paper, Citation, Note]),
     CitationsModule,
-    LibraryModule,
     SummariesModule,
+    LibrariesModule,
     forwardRef(() => PdfModule),
   ],
   providers: [PapersService, PaperMetadataService],

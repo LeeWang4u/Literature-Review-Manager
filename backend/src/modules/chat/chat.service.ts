@@ -25,13 +25,13 @@ export class ChatService {
     console.log('✅ Gemini API initialized with model: gemini-2.5-flash');
   }
 
-  async chat(chatDto: ChatMessageDto): Promise<ChatResponse> {
+  async chat(chatDto: ChatMessageDto, userId: number): Promise<ChatResponse> {
     try {
       let contextText = '';
 
-      // If paperId is provided, get paper context
+      // If paperId is provided, get paper context (ownership checked)
       if (chatDto.paperId) {
-        const paper = await this.papersService.findOne(chatDto.paperId);
+        const paper = await this.papersService.findOne(chatDto.paperId, userId);
         
         // Use fullText if available, otherwise fallback to abstract
         const paperContent = paper.fullText || paper.abstract || 'No content available';

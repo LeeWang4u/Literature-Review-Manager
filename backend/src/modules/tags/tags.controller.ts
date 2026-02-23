@@ -26,20 +26,20 @@ export class TagsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get tag by ID' })
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    return await this.tagsService.findOne(id);
+  async findOne(@Param('id', ParseIntPipe) id: number, @Request() req) {
+    return await this.tagsService.findOne(id, req.user.id);
   }
 
   @Put(':id')
   @ApiOperation({ summary: 'Update tag' })
-  async update(@Param('id', ParseIntPipe) id: number, @Body() updateTagDto: UpdateTagDto) {
-    return await this.tagsService.update(id, updateTagDto);
+  async update(@Param('id', ParseIntPipe) id: number, @Body() updateTagDto: UpdateTagDto, @Request() req) {
+    return await this.tagsService.update(id, updateTagDto, req.user.id);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete tag' })
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    await this.tagsService.remove(id);
+  async remove(@Param('id', ParseIntPipe) id: number, @Request() req) {
+    await this.tagsService.remove(id, req.user.id);
     return { message: 'Tag deleted successfully' };
   }
 }

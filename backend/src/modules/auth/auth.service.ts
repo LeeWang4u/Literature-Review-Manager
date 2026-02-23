@@ -9,6 +9,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { User } from '../users/user.entity';
 import { randomUUID } from 'crypto';
 import { EmailService } from '../mail/mail.service';
+import { LibrariesService } from '../libraries/libraries.service';
 
 export interface AuthResponse {
   accessToken: string;
@@ -26,6 +27,7 @@ export class AuthService {
     private usersService: UsersService,
     private jwtService: JwtService,
     private emailService: EmailService,
+    private librariesService: LibrariesService,
   ) {}
 
 
@@ -73,12 +75,18 @@ export class AuthService {
       throw new BadRequestException('OTP không đúng');
     }
   
-    await this.usersService.create({
+    const newUser = await this.usersService.create({
       email: payload.email,
       password: payload.password,
       fullName: payload.fullName,
-      affiliation: payload.affiliation,
     });
+
+    // Create default "My Library" for the new user
+    try {
+      await this.librariesService.createDefaultLibrary(newUser.id);
+    } catch (error) {
+      console.error('Failed to create default library:', error);
+    }
 
     return { message: 'Xác thực email thành công' };
   }
@@ -262,6 +270,13 @@ export class AuthService {
         avatarUrl,
         googleId,
       });
+      
+      // Create default "My Library" for the new Google user
+      try {
+        await this.librariesService.createDefaultLibrary(user.id);
+      } catch (error) {
+        console.error('Failed to create default library for Google user:', error);
+      }
     }
 
     return user;

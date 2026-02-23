@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -35,13 +35,11 @@ import {
   RestartAlt,
   Close,
   Circle,
-  Timeline,
-  Star,
   Edit,
   Save,
   Cancel,
   AccountTree,
-  AutoAwesome,
+  // AutoAwesome,
   FilterList,
   OpenInNew,
   ArrowBack,
@@ -52,12 +50,72 @@ import { citationService } from '@/services/citation.service';
 import { paperService } from '@/services/paper.service';
 import toast from 'react-hot-toast';
 
+// Helper function to compute impact tiers
+// Compute impact tiers for a set of references
+const computeImpactTiers = (references: any[], displayBudget: number = 50): any[] => {
+  if (references.length === 0) return [];
+
+  // Sort by impactScore (relevanceScore) descending
+  const sortedRefs = [...references].sort((a, b) =>
+    (b.relevanceScore || 0) - (a.relevanceScore || 0)
+  );
+
+  const tiers = [];
+  const totalRefs = sortedRefs.length;
+  const targetTierSize = Math.max(3, Math.min(15, Math.floor(displayBudget / 3)));
+
+  let currentIndex = 0;
+  let tierNum = 1;
+
+  while (currentIndex < totalRefs && tierNum <= 10) {
+    const remainingRefs = totalRefs - currentIndex;
+    const proposedTierSize = Math.min(targetTierSize, remainingRefs);
+    let actualTierSize = proposedTierSize;
+
+    // Look for significant score gaps
+    for (let i = 1; i < Math.min(proposedTierSize, remainingRefs - 1); i++) {
+      const currentScore = sortedRefs[currentIndex + i].relevanceScore || 0;
+      const nextScore = sortedRefs[currentIndex + i + 1]?.relevanceScore || 0;
+      const gap = currentScore - nextScore;
+
+      if (gap > currentScore * 0.2 && i >= 3) {
+        actualTierSize = i + 1;
+        break;
+      }
+    }
+
+    const endIndex = currentIndex + actualTierSize;
+    const tierRefs = sortedRefs.slice(currentIndex, endIndex);
+    const nodeIds = tierRefs.map(ref => ref.id);
+
+    tiers.push({
+      tier: tierNum,
+      nodeIds,
+      nodeCount: nodeIds.length,
+    });
+
+    currentIndex = endIndex;
+    tierNum++;
+  }
+
+  // Append remaining refs to last tier
+  if (currentIndex < totalRefs && tiers.length > 0) {
+    const lastTier = tiers[tiers.length - 1];
+    const remainingRefs = sortedRefs.slice(currentIndex);
+    lastTier.nodeIds.push(...remainingRefs.map(ref => ref.id));
+    lastTier.nodeCount = lastTier.nodeIds.length;
+  }
+
+  return tiers;
+};
+
 interface NodeData {
   id: number;
   title: string;
   year: number;
   authors: string[];
   doi?: string;
+  url?: string;
   isInfluential?: boolean;
   relevanceScore?: number;
   isReference?: boolean;
@@ -71,23 +129,35 @@ interface NodeData {
 }
 
 const CitationNetworkPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const { id: idParam } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const [depth, setDepth] = useState<number>(2);
+  // Handle case where id might be undefined
+  if (!idParam) {
+    return (
+      <Container maxWidth="lg" sx={{ mt: 4 }}>
+        <Alert severity="error">Invalid paper ID</Alert>
+      </Container>
+    );
+  }
+
+  const id = idParam;
+
+  const [depth, setDepth] = useState<number>(1);
   const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<number | null>(null);
   const [tempRelevance, setTempRelevance] = useState<number>(0);
   const [tempContext, setTempContext] = useState<string>('');
-  const [showTopOnly] = useState(true);
   const [useTreeLayout, setUseTreeLayout] = useState(true); // Toggle tree vs force layout
-  const analysisLimit = 15;
-  const minRelevance = 0.3;
   const [filteredCount, setFilteredCount] = useState({ nodes: 0, edges: 0 });
+  // const [selectedTiers, setSelectedTiers] = useState<any[]>([]); // Tier UI removed
+  const [selectedTierLevel, setSelectedTierLevel] = useState<number>(1); // 1 = Tier 1, 2 = Tier 1+2, etc., 0 = All
+  const [selectedTierLevelDepth2, setSelectedTierLevelDepth2] = useState<number>(0); // 0 = None, 1 = parent 1, 2 = parents 1-2, etc.
+  const [selectedDepth2TierLevels, setSelectedDepth2TierLevels] = useState<{ [parentId: number]: number }>({}); // Per-parent tier selection
   
   // Add manual node state
   const [addNodeDialog, setAddNodeDialog] = useState(false);
@@ -107,11 +177,23 @@ const CitationNetworkPage: React.FC = () => {
     enabled: !!selectedNode && selectedNode.id !== Number(id),
   });
 
-  const { data: network, isLoading } = useQuery({
+  const { data: network, isLoading, error: networkError } = useQuery({
     queryKey: ['citationNetwork', id, depth],
     queryFn: () => citationService.getNetwork(Number(id), depth),
     enabled: !!id,
+    retry: false,
   });
+
+  // Handle network errors with redirect
+  useEffect(() => {
+    if (networkError) {
+      const err = networkError as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Paper not found or you do not have access');
+        navigate('/papers');
+      }
+    }
+  }, [networkError, navigate]);
 
   const { data: references = [] } = useQuery({
     queryKey: ['citations', 'references', id],
@@ -119,11 +201,116 @@ const CitationNetworkPage: React.FC = () => {
     enabled: !!id,
   });
 
-  const { data: analysis } = useQuery({
-    queryKey: ['referenceAnalysis', id, analysisLimit, minRelevance],
-    queryFn: () => citationService.analyzeReferences(Number(id), { limit: analysisLimit, minRelevance }),
-    enabled: !!id && showTopOnly, // Only fetch when showTopOnly is true
-  });
+  // Auto-enable tier selection when references are available
+  const showTopOnly = references.length > 0;
+
+  // Compute depth 1 tiers (from network.tiers)
+  const depth1Tiers = network?.tiers || [];
+  
+  // Compute depth 2 per-parent tiers
+  const depth2ParentData = React.useMemo(() => {
+    if (!network?.nodes || !network?.edges) return [];
+    
+    const depth1Nodes = (network.nodes as NodeData[]).filter((n) => 
+      ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 1
+    );
+    const depth2Nodes = (network.nodes as NodeData[]).filter((n) => 
+      ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 2
+    );
+
+    if (depth1Nodes.length === 0) return [];
+
+    // For each depth 1 node (parent), find its depth 2 children (references)
+    const parentData = depth1Nodes.map((parent) => {
+      // Find all depth 2 nodes that are children of this parent
+      const childEdges = network.edges.filter((edge: any) => {
+        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+        return sourceId === parent.id;
+      });
+
+      const children = childEdges
+        .map((edge: any) => {
+          const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+          return depth2Nodes.find(n => n.id === targetId);
+        })
+        .filter(Boolean) as NodeData[];
+
+      // Add relevanceScore from edges if available
+      const childrenWithScores = children.map(child => {
+        const edge = network.edges.find((e: any) => {
+          const sourceId = typeof e.source === 'object' ? e.source.id : e.source;
+          const targetId = typeof e.target === 'object' ? e.target.id : e.target;
+          return sourceId === parent.id && targetId === child.id;
+        });
+        return {
+          ...child,
+          relevanceScore: (edge as any)?.relevanceScore ?? child.relevanceScore ?? 0
+        };
+      });
+
+      // Compute tiers for this parent's children
+      const displayBudget = 15; // Per-parent display budget
+      const tiers = computeImpactTiers(childrenWithScores, displayBudget);
+
+      return {
+        parentId: parent.id,
+        parentNode: parent,
+        children: childrenWithScores,
+        tiers,
+        totalChildren: children.length
+      };
+    }).filter(p => p.children.length > 0); // Only keep parents with children
+
+    // Sort by total children descending (most connected parents first)
+    return parentData.sort((a, b) => b.totalChildren - a.totalChildren);
+  }, [network]);
+
+  // Simplified depth2Tiers for UI - represents parent selection
+  const depth2Tiers = React.useMemo(() => {
+    return depth2ParentData.map((parent, index) => ({
+      tier: index + 1,
+      parentId: parent.parentId,
+      nodeCount: parent.totalChildren,
+      nodeIds: [parent.parentId],
+      nodes: [parent.parentNode]
+    }));
+  }, [depth2ParentData]);
+
+  // Update selectedDepth2TierLevels when selectedTierLevelDepth2 or depth2ParentData changes
+  useEffect(() => {
+    console.log('🔄 useEffect: Updating selectedDepth2TierLevels');
+    console.log(`   selectedTierLevelDepth2: ${selectedTierLevelDepth2}, depth2ParentData.length: ${depth2ParentData.length}`);
+
+    if (depth2ParentData.length > 0) {
+      const newTierLevels = { ...selectedDepth2TierLevels };
+
+      // Ensure all currently selected parents have tier levels
+      if (selectedTierLevelDepth2 > 0) {
+        const selectedParents = depth2ParentData.slice(0, selectedTierLevelDepth2);
+        selectedParents.forEach(parentData => {
+          if (!(parentData.parentId in newTierLevels)) {
+            newTierLevels[parentData.parentId] = 1; // Default to tier 1
+            console.log(`   ➕ Added default tier 1 for parent ${parentData.parentId}`);
+          }
+        });
+      }
+
+      // Remove tier levels for parents that are no longer in the first selectedTierLevelDepth2 parents
+      Object.keys(newTierLevels).forEach(parentId => {
+        const parentIndex = depth2ParentData.findIndex(p => p.parentId === Number(parentId));
+        const shouldKeep = parentIndex >= 0 && parentIndex < selectedTierLevelDepth2;
+        if (!shouldKeep) {
+          delete newTierLevels[Number(parentId)];
+          console.log(`   ➖ Removed tier level for parent ${parentId} (no longer in selection)`);
+        }
+      });
+
+      console.log('   📊 Final selectedDepth2TierLevels:', newTierLevels);
+      setSelectedDepth2TierLevels(newTierLevels);
+    } else {
+      setSelectedDepth2TierLevels({});
+    }
+  }, [selectedTierLevelDepth2, depth2ParentData]);
 
   const updateCitationMutation = useMutation({
     mutationFn: ({ citationId, data }: { citationId: number; data: any }) =>
@@ -140,6 +327,7 @@ const CitationNetworkPage: React.FC = () => {
     },
   });
 
+  /*
   const autoRateMutation = useMutation({
     mutationFn: (citationId: number) => citationService.autoRate(citationId),
     onSuccess: (data) => {
@@ -152,6 +340,7 @@ const CitationNetworkPage: React.FC = () => {
       toast.error(error.response?.data?.message || 'AI rating failed');
     },
   });
+  */
 
   // Uncomment if needed for batch AI rating
   // const autoRateAllMutation = useMutation({
@@ -166,12 +355,11 @@ const CitationNetworkPage: React.FC = () => {
   //   },
   // });
 
+  // Fetch nested references mutation (commented out - not currently used)
+  /*
   const fetchNestedMutation = useMutation({
     mutationFn: ({ paperId, depth, maxDepth }: { paperId: number; depth: number; maxDepth: number }) =>
       paperService.fetchNestedReferences(paperId, depth, maxDepth),
-    // call single eager endpoint that finds DOI (if missing) then fetches references in one operation
-    // mutationFn: ({ paperId, depth, maxDepth }: { paperId: number; depth: number; maxDepth: number }) =>
-    //   paperService.fetchNestedReferencesEager(paperId, depth, maxDepth),
     onSuccess: (result) => {
       const method = result.stats.method || 'API';
       const methodIcon =
@@ -197,6 +385,7 @@ const CitationNetworkPage: React.FC = () => {
       toast.error(error.response?.data?.message || 'Failed to fetch nested references');
     },
   });
+  */
 
   const addManualNodeMutation = useMutation({
     mutationFn: async (data: typeof newNodeData) => {
@@ -249,65 +438,191 @@ const CitationNetworkPage: React.FC = () => {
       setDrawerOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to fetch references');
+      const errorMessage = error.response?.data?.message || 'Failed to fetch references';
+
+      // Handle multi-line error messages better
+      if (errorMessage.includes('\n')) {
+        toast.error(
+          <div>
+            <div className="font-semibold mb-2">Reference Fetch Failed</div>
+            <div className="text-sm whitespace-pre-line">{errorMessage}</div>
+          </div>,
+          { duration: 8000 }
+        );
+      } else {
+        toast.error(errorMessage);
+      }
     },
   });
 
-  useEffect(() => {
-    if (!network || !svgRef.current || !containerRef.current) return;
+  // Compute filtered nodes and edges based on tier selections
+  const { filteredNodes, filteredEdges } = useMemo(() => {
+    console.log('🔄 useMemo: Computing filtered nodes and edges');
+    console.log('   Dependencies changed:', {
+      network: !!network,
+      showTopOnly,
+      depth1Tiers: depth1Tiers?.length,
+      selectedTierLevel,
+      selectedTierLevelDepth2,
+      depth2ParentData: depth2ParentData.length,
+      selectedDepth2TierLevels: Object.keys(selectedDepth2TierLevels).length,
+      references: references.length,
+      id
+    });
 
-    d3.select(svgRef.current).selectAll('*').remove();
+    if (!network) return { filteredNodes: [], filteredEdges: [] };
 
     // Filter nodes based on showTopOnly - don't create copies to preserve D3 references
     let filteredNodes = network.nodes;
     let filteredEdges = network.edges;
 
-    if (showTopOnly && analysis?.topReferences) {
-      // Top references return { citation, paper, score } - use paper.id
-      const topRefIds = new Set(analysis.topReferences.map((ref: any) => ref.paper.id));
+    // Apply tier-aware selection algorithm
+    if (showTopOnly && depth1Tiers && depth1Tiers.length > 0) {
+      console.log('🔍 Tier-aware selection algorithm activated');
+      console.log(`   References: ${references.length}, Selected Tier Level: ${selectedTierLevel}, Depth2 Tier Level: ${selectedTierLevelDepth2}`);
+      console.log(`   Depth1 Tiers: ${depth1Tiers.length}, Depth2 Tiers: ${depth2Tiers.length}`);
+
+      const selectedNodeIds = new Set<number>();
+      const selectedTiersList: typeof depth1Tiers = [];
       const mainPaperId = Number(id);
 
-      // Keep main paper + top references + their nested references (depth 2+)
+      // Select depth 1 tiers based on selectedTierLevel
+      let currentCount = 0;
+
+      if (selectedTierLevel === 0) {
+        // Show all depth 1 tiers
+        console.log('🎯 Target: show all depth 1 tiers');
+        let beforeSize = selectedNodeIds.size;
+        for (const tier of depth1Tiers) {
+          const beforeTierSize = selectedNodeIds.size;
+          tier.nodeIds.forEach((id: number) => selectedNodeIds.add(id));
+          const addedCount = selectedNodeIds.size - beforeTierSize;
+          currentCount += tier.nodeCount;
+          selectedTiersList.push(tier);
+          console.log(`   ✅ Depth1 Tier ${tier.tier}: claimed ${tier.nodeCount} nodes, actually added ${addedCount} unique nodes (Total claimed: ${currentCount}, Total unique: ${selectedNodeIds.size})`);
+        }
+        console.log(`   📊 Depth1 OVERALL: claimed ${currentCount} nodes, actually selected ${selectedNodeIds.size} unique nodes (${selectedNodeIds.size - beforeSize} added)`);
+      } else {
+        // Show up to selectedTierLevel for depth 1
+        console.log(`🎯 Target: show up to Depth1 Tier ${selectedTierLevel}`);
+        let beforeSize = selectedNodeIds.size;
+        for (const tier of depth1Tiers) {
+          if (tier.tier <= selectedTierLevel) {
+            const beforeTierSize = selectedNodeIds.size;
+            tier.nodeIds.forEach((id: number) => selectedNodeIds.add(id));
+            const addedCount = selectedNodeIds.size - beforeTierSize;
+            currentCount += tier.nodeCount;
+            selectedTiersList.push(tier);
+            console.log(`   ✅ Depth1 Tier ${tier.tier}: claimed ${tier.nodeCount} nodes, actually added ${addedCount} unique nodes (Total claimed: ${currentCount}, Total unique: ${selectedNodeIds.size})`);
+          } else {
+            break;
+          }
+        }
+        console.log(`   📊 Depth1 OVERALL: claimed ${currentCount} nodes, actually selected ${selectedNodeIds.size} unique nodes (${selectedNodeIds.size - beforeSize} added)`);
+      }
+
+      console.log(`📊 After depth1 selection: ${selectedTiersList.length} tiers, ${currentCount} refs (tier counts sum), actual selected nodes: ${selectedNodeIds.size}`);
+
+      // Select depth 2 nodes using per-parent tier-aware selection
+      let depth2Count = 0;
+      if (selectedTierLevelDepth2 > 0 && depth2ParentData.length > 0) {
+        console.log(`🎯 Target: show up to ${selectedTierLevelDepth2} depth 2 parent(s)`);
+
+        // Select parents based on selectedTierLevelDepth2
+        const selectedParents = depth2ParentData.slice(0, selectedTierLevelDepth2);
+
+        selectedParents.forEach((parentData, index) => {
+          const parentId = parentData.parentId;
+
+          // Get tier selection for this parent (default to tier 1)
+          const parentTierLevel = selectedDepth2TierLevels[parentId] ?? 1;
+
+          console.log(`   📄 Parent ${index + 1} (ID: ${parentId}): selecting tier level ${parentTierLevel}`);
+
+          // Select nodes from this parent's tiers up to parentTierLevel
+          const beforeParentSize = selectedNodeIds.size;
+          const maxTierLevel = parentData.tiers.length;
+          const effectiveTierLevel = parentTierLevel >= 999 ? maxTierLevel : parentTierLevel;
+
+          for (const tier of parentData.tiers) {
+            if (tier.tier <= effectiveTierLevel) {
+              tier.nodeIds.forEach((id: number) => {
+                selectedNodeIds.add(id);
+              });
+            }
+          }
+
+          const parentSelectedCount = selectedNodeIds.size - beforeParentSize;
+          depth2Count += parentSelectedCount;
+          console.log(`      ✅ Selected ${parentSelectedCount} unique children from ${parentData.tiers.length} tier(s)`);
+        });
+      }
+
+      console.log(`📊 After depth2 selection: depth2 added ${depth2Count} refs, total nodes in set: ${selectedNodeIds.size}`);
+      console.log(`📊 FINAL SUMMARY: depth1 (${currentCount} refs from tiers) + depth2 (${depth2Count} refs) = ${selectedNodeIds.size} unique selected nodes`);
+      console.log(`   Expected total papers: ${selectedNodeIds.size + 1} (including main paper ${mainPaperId})`);
+
+      // Filter nodes: Keep main paper + selected tier nodes from both depths
+      console.log(`🔍 Filtering: ${selectedNodeIds.size} selected nodes + 1 main paper (${mainPaperId}) from ${network.nodes.length} total nodes`);
+      
       filteredNodes = network.nodes.filter((node: any) => {
-        // Always keep main paper
+        // Always keep main paper (depth 0)
         if (node.id === mainPaperId) return true;
 
-        // Keep ALL direct references (depth 1) - including manual additions
-        const depth = node.networkDepth ?? node.citationDepth ?? 0;
-        if (depth === 1) return true;
-
-        // Keep nested references (depth 2+) that are connected to top references
-        if (depth >= 2) {
-          // Check if this node has edges connecting to any top reference
-          const hasConnectionToTopRef = network.edges.some((edge: any) => {
-            const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-            const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
-
-            // This node is cited by a top reference
-            if (targetId === node.id && topRefIds.has(sourceId)) return true;
-            // This node cites a top reference
-            if (sourceId === node.id && topRefIds.has(targetId)) return true;
-
-            return false;
-          });
-
-          return hasConnectionToTopRef;
-        }
-
-        return false;
+        // Keep selected tier nodes
+        return selectedNodeIds.has(node.id);
       });
+
+      console.log(`   Result: ${filteredNodes.length} nodes kept (should be ${selectedNodeIds.size + 1} with main paper)`);
+      
+      // Verify depth distribution
+      const depth0Count = filteredNodes.filter((n: any) => ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 0).length;
+      const depth1Count = filteredNodes.filter((n: any) => ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 1).length;
+      const depth2Count_actual = filteredNodes.filter((n: any) => ((n as any).networkDepth ?? (n as any).citationDepth ?? 0) === 2).length;
+      console.log(`   Distribution: depth0=${depth0Count}, depth1=${depth1Count}, depth2=${depth2Count_actual}`);
 
       const filteredNodeIds = new Set(filteredNodes.map((n: any) => n.id));
       filteredEdges = network.edges.filter((edge: any) => {
-        // Handle both number IDs and object references
+        const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+        const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        return filteredNodeIds.has(sourceId) && filteredNodeIds.has(targetId);
+      });
+    } else if (filteredNodes.length > (selectedTierLevel === 0 ? 1000 : 50)) {
+      // Fallback: Simple limit when no references or no tiers (keep most connected nodes)
+      const limit = selectedTierLevel === 0 ? 1000 : 50;
+      const sortedNodes = [...filteredNodes].sort((a: any, b: any) => {
+        const aConnections = network.edges.filter((e: any) =>
+          (typeof e.source === 'object' ? e.source.id : e.source) === a.id ||
+          (typeof e.target === 'object' ? e.target.id : e.target) === a.id
+        ).length;
+        const bConnections = network.edges.filter((e: any) =>
+          (typeof e.source === 'object' ? e.source.id : e.source) === b.id ||
+          (typeof e.target === 'object' ? e.target.id : e.target) === b.id
+        ).length;
+        return bConnections - aConnections;
+      });
+
+      filteredNodes = sortedNodes.slice(0, limit);
+      const filteredNodeIds = new Set(filteredNodes.map((n: any) => n.id));
+      filteredEdges = network.edges.filter((edge: any) => {
         const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
         const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
         return filteredNodeIds.has(sourceId) && filteredNodeIds.has(targetId);
       });
     }
 
-    // Update filtered counts
+    return { filteredNodes, filteredEdges };
+  }, [network, showTopOnly, depth1Tiers, selectedTierLevel, selectedTierLevelDepth2, depth2ParentData, selectedDepth2TierLevels, references.length, id]);
+
+  // Update filtered counts when filtered data changes
+  useEffect(() => {
     setFilteredCount({ nodes: filteredNodes.length, edges: filteredEdges.length });
+  }, [filteredNodes.length, filteredEdges.length]);
+
+  useEffect(() => {
+    if (!network || !svgRef.current || !containerRef.current) return;
+
+    d3.select(svgRef.current).selectAll('*').remove();
 
     const containerWidth = containerRef.current.clientWidth;
     const width = Math.max(containerWidth - 40, 1200);
@@ -378,7 +693,7 @@ const CitationNetworkPage: React.FC = () => {
       { id: 0, color: '#999', size: 6 },
       { id: 1, color: '#4caf50', size: 8 },
       { id: 2, color: '#ffd700', size: 9 },
-      { id: 3, color: '#e65100', size: 8 }, // Orange marker for deep2 links
+      { id: 3, color: '#ff9800', size: 8 }, // Orange marker for deep2 links
       { id: 4, color: '#1565c0', size: 8 }  // Blue marker for deep1 links
     ].forEach(({ id, color, size }) => {
       defs.append('marker')
@@ -443,45 +758,48 @@ const CitationNetworkPage: React.FC = () => {
       .join('path')
       .attr('fill', 'none')
       .attr('stroke', (d: any) => {
-        const depth = d.citationDepth;
-        const influential = d.isInfluential;
-        const score = d.relevanceScore;
+        // Calculate edge depth based on source node's network depth (edges from level N point to level N+1)
+        const sourceDepth = d.source?.networkDepth ?? d.source?.citationDepth ?? 0;
         
-        // Check citationDepth FIRST - highest priority
-        if (depth === 2) return '#e65100'; // Orange color for deep2
-        if (depth === 1) return '#1565c0'; // Blue color for deep1
+        // Check source depth - edges from level 1 nodes go to level 2 nodes
+        if (sourceDepth === 1) return '#ff9800'; // Orange color for edges from depth 1 nodes (to depth 2)
+        if (sourceDepth === 0) return '#1565c0'; // Blue color for edges from depth 0 nodes (to depth 1)
         
-        if (influential) return '#ffd700';
-        if (score && score >= 0.8) return '#4caf50';
-        if (score && score >= 0.6) return '#8bc34a';
-        if (score && score >= 0.4) return '#ffc107';
-        if (score && score > 0) return '#ff9800';
+        // if (d.isInfluential) return '#ffd700'; // Commented out influential color
+        if (d.relevanceScore && d.relevanceScore >= 0.8) return '#4caf50';
+        if (d.relevanceScore && d.relevanceScore >= 0.6) return '#8bc34a';
+        if (d.relevanceScore && d.relevanceScore >= 0.4) return '#ffc107';
+        if (d.relevanceScore && d.relevanceScore > 0) return '#ff9800';
         return '#bdbdbd';
       })
       .attr('stroke-opacity', (d: any) => {
-        if (d.citationDepth === 2) return 0.8; // Higher opacity for deep2
-        if (d.citationDepth === 1) return 0.7; // Medium opacity for deep1
+        const sourceDepth = d.source?.networkDepth ?? d.source?.citationDepth ?? 0;
+        if (sourceDepth === 1) return 0.8; // Higher opacity for edges from depth 1
+        if (sourceDepth === 0) return 0.7; // Medium opacity for edges from depth 0
         if (d.relevanceScore) return 0.4 + d.relevanceScore * 0.5;
         return 0.3;
       })
       .attr('stroke-width', (d: any) => {
-        if (d.citationDepth === 2) return 3.5; // Thicker for deep2
-        if (d.citationDepth === 1) return 3; // Medium thickness for deep1
-        if (d.isInfluential) return 4;
+        const sourceDepth = d.source?.networkDepth ?? d.source?.citationDepth ?? 0;
+        if (sourceDepth === 1) return 3.5; // Thicker for edges from depth 1
+        if (sourceDepth === 0) return 3; // Medium thickness for edges from depth 0
+        // if (d.isInfluential) return 4; // Commented out influential radius
         if (d.relevanceScore && d.relevanceScore >= 0.7) return 3.5;
         if (d.relevanceScore && d.relevanceScore >= 0.4) return 3;
         return 2;
       })
       .attr('marker-start', (d: any) => { // Changed to marker-start for reversed arrow
-        if (d.citationDepth === 2) return 'url(#arrowhead-3)'; // Purple arrow for deep2
-        if (d.citationDepth === 1) return 'url(#arrowhead-4)'; // Blue arrow for deep1
-        if (d.isInfluential) return 'url(#arrowhead-2)';
+        const sourceDepth = d.source?.networkDepth ?? d.source?.citationDepth ?? 0;
+        if (sourceDepth === 1) return 'url(#arrowhead-3)'; // Orange arrow for edges from depth 1
+        if (sourceDepth === 0) return 'url(#arrowhead-4)'; // Blue arrow for edges from depth 0
+        // if (d.isInfluential) return 'url(#arrowhead-2)'; // Commented out influential marker
         if (d.relevanceScore && d.relevanceScore >= 0.7) return 'url(#arrowhead-1)';
         return 'url(#arrowhead-0)';
       })
       .attr('stroke-dasharray', (d: any) => {
-        if (d.citationDepth === 2) return '8,4'; // Dashed line for deep2
-        if (d.citationDepth === 1) return '4,2'; // Short dashed line for deep1
+        const sourceDepth = d.source?.networkDepth ?? d.source?.citationDepth ?? 0;
+        if (sourceDepth === 1) return 'none'; // Solid line for edges from depth 1
+        if (sourceDepth === 0) return 'none'; // Solid line for edges from depth 0
         if (!d.relevanceScore || d.relevanceScore < 0.3) return '5,5';
         return 'none';
       })
@@ -493,13 +811,14 @@ const CitationNetworkPage: React.FC = () => {
       .text((d: any) => {
         const sourceTitle = d.source?.title || 'Unknown';
         const targetTitle = d.target?.title || 'Unknown';
+        const sourceDepth = d.source?.networkDepth ?? d.source?.citationDepth ?? 0;
         const parts = [
           `📄 From: ${sourceTitle.substring(0, 50)}${sourceTitle.length > 50 ? '...' : ''}`,
           `📄 To: ${targetTitle.substring(0, 50)}${targetTitle.length > 50 ? '...' : ''}`,
           '',
-          d.citationDepth === 2 ? '🔗 Deep Reference (Level 2)' : d.citationDepth === 1 ? '🔗 Indirect Reference (Level 1)' : '🔗 Direct Reference',
+          sourceDepth === 1 ? '🔗 Level 2 Connection (from Level 1)' : sourceDepth === 0 ? '🔗 Level 1 Connection (from root)' : '🔗 Other Connection',
           d.relevanceScore ? `⭐ Relevance: ${(d.relevanceScore * 100).toFixed(0)}%` : '❓ Not rated',
-          d.isInfluential ? '🌟 Highly Influential Citation' : '',
+          // d.isInfluential ? '🌟 Highly Influential Citation' : '', // Commented out influential tooltip
         ];
         return parts.filter(Boolean).join('\n');
       });
@@ -516,8 +835,8 @@ const CitationNetworkPage: React.FC = () => {
         return Number(b) - Number(a); // Descending (newest first, top to bottom)
       });
 
-      console.log('📅 Years in network:', years);
-      console.log('📊 Nodes per year:', Array.from(nodesByYear.entries()).map(([y, nodes]) => `${y}: ${nodes.length}`));
+      // console.log('📅 Years in network:', years);
+      // console.log('📊 Nodes per year:', Array.from(nodesByYear.entries()).map(([y, nodes]) => `${y}: ${nodes.length}`));
 
       // Calculate layout
       const yearHeight = 150; // Space between year groups (reduced from 200)
@@ -633,7 +952,7 @@ const CitationNetworkPage: React.FC = () => {
         setSelectedNode(d);
         setDrawerOpen(true);
       })
-      .on('mouseenter', function(event, d: any) {
+      .on('mouseenter', function(_event, d: any) {
         d3.select(this)
           .raise()
           .transition()
@@ -654,15 +973,16 @@ const CitationNetworkPage: React.FC = () => {
           return isConnected ? 0.7 : 0.2;
         });
       })
-      .on('mouseleave', function(event, d: any) {
+      .on('mouseleave', function(_event, d: any) {
         d3.select(this)
           .transition()
           .duration(200)
           .attr('transform', `translate(${d.x},${d.y}) scale(1)`);
         
         link.attr('stroke-opacity', (l: any) => {
-          if (l.citationDepth === 2) return 0.8;
-          if (l.citationDepth === 1) return 0.7;
+          const targetDepth = l.target.networkDepth;
+          if (targetDepth === 2) return 0.8;
+          if (targetDepth === 1) return 0.7;
           if (l.relevanceScore) return 0.4 + l.relevanceScore * 0.5;
           return 0.3;
         });
@@ -685,10 +1005,11 @@ const CitationNetworkPage: React.FC = () => {
       { id: 'grad-main', color1: '#e91e63', color2: '#c2185b' },
       { id: 'grad-influential-0', color1: '#ffa726', color2: '#f57c00' },
       { id: 'grad-influential-1', color1: '#ffb74d', color2: '#ff9800' },
+      { id: 'grad-influential-depth2', color1: '#ffb74d', color2: '#4caf50' }, // Yellow-green for influential depth 2
       { id: 'grad-influential-2', color1: '#ffcc80', color2: '#ffb74d' },
       { id: 'grad-depth-0', color1: '#66bb6a', color2: '#43a047' },
       { id: 'grad-depth-1', color1: '#42a5f5', color2: '#1e88e5' },
-      { id: 'grad-depth-2', color1: '#ff7043', color2: '#e65100' }, // Orange gradient for depth 2
+      { id: 'grad-depth-2', color1: '#4caf50', color2: '#2e7d32' }, // Green gradient for depth 2 - distinct from blue level 1
       { id: 'grad-default', color1: '#90a4ae', color2: '#607d8b' }
     ];
 
@@ -720,11 +1041,14 @@ const CitationNetworkPage: React.FC = () => {
       .attr('fill', (d: any) => {
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
         if (d.id === Number(id)) return 'url(#grad-main)';
-        if (d.isInfluential) {
-          if (depth === 0) return 'url(#grad-influential-0)';
-          if (depth === 1) return 'url(#grad-influential-1)';
-          return 'url(#grad-influential-2)';
-        }
+        
+        // Depth colors have HIGHEST priority for visual distinction
+        // if (depth === 0) return d.isInfluential ? 'url(#grad-influential-0)' : 'url(#grad-depth-0)'; // Commented out influential gradients
+        // if (depth === 1) return d.isInfluential ? 'url(#grad-influential-1)' : 'url(#grad-depth-1)'; // Commented out influential gradients
+        // if (depth === 2) return d.isInfluential ? 'url(#grad-influential-depth2)' : 'url(#grad-depth-2)'; // Commented out influential gradients
+        
+        // For deeper levels, use influential or default
+        // return d.isInfluential ? 'url(#grad-influential-2)' : 'url(#grad-default)'; // Commented out influential gradients
         if (depth === 0) return 'url(#grad-depth-0)';
         if (depth === 1) return 'url(#grad-depth-1)';
         if (depth === 2) return 'url(#grad-depth-2)';
@@ -732,7 +1056,7 @@ const CitationNetworkPage: React.FC = () => {
       })
       .attr('stroke', (d: any) => {
         if (d.id === Number(id)) return '#ad1457';
-        if (d.isInfluential) return '#e65100';
+        // if (d.isInfluential) return '#e65100'; // Commented out influential stroke color
         const depth = d.networkDepth ?? d.citationDepth ?? 0;
         if (depth === 0) return '#2e7d32';
         if (depth === 1) return '#1565c0';
@@ -741,7 +1065,7 @@ const CitationNetworkPage: React.FC = () => {
       })
       .attr('stroke-width', (d: any) => {
         if (d.id === Number(id)) return 3.5;
-        if (d.isInfluential) return 3;
+        // if (d.isInfluential) return 3; // Commented out influential stroke width
         return 2;
       })
       .attr('filter', 'url(#node-shadow)')
@@ -778,7 +1102,7 @@ const CitationNetworkPage: React.FC = () => {
       .style('justify-content', 'center')
       .style('text-align', 'center')
       .style('font-size', '11px')
-      .style('font-weight', (d: any) => (d.id === Number(id) ? 'bold' : d.isInfluential ? '600' : 'normal'))
+      .style('font-weight', (d: any) => (d.id === Number(id) ? 'bold' : /* d.isInfluential ? '600' : */ 'normal'))
       .style('color', '#fff')
       .style('line-height', '1.3')
       .style('overflow', 'hidden')
@@ -802,8 +1126,8 @@ const CitationNetworkPage: React.FC = () => {
       .attr('pointer-events', 'none')
       .text((d: any) => {
         const year = d.year || d.publicationYear || '';
-        const badge = d.isInfluential ? ' ⭐' : '';
-        return `${year}${badge}`.trim();
+        // const badge = d.isInfluential ? ' ⭐' : ''; // Commented out influential badge
+        return `${year}`.trim();
       });
 
     // Relevance score badge (small circle on top-right corner)
@@ -852,7 +1176,7 @@ const CitationNetworkPage: React.FC = () => {
           d.doi ? `🔗 DOI: ${d.doi}` : '',
           '',
           d.relevanceScore ? `⭐ Relevance: ${(d.relevanceScore * 100).toFixed(0)}% ${d.relevanceScore >= 0.8 ? '(High)' : d.relevanceScore >= 0.6 ? '(Good)' : d.relevanceScore >= 0.4 ? '(Medium)' : '(Low)'}` : '❓ Not rated yet',
-          d.isInfluential ? '🌟 Influential Reference' : '',
+          // d.isInfluential ? '🌟 Influential Reference' : '', // Commented out influential tooltip
           '',
           '🖱️ Hover: Highlight connections',
           '💡 Click: View details and rate'
@@ -906,7 +1230,7 @@ const CitationNetworkPage: React.FC = () => {
     }
 
     // Drag functions
-    function dragstarted(event: any, d: any) {
+    function dragstarted(_event: any, d: any) {
       if (useTreeLayout) {
         // In tree layout, temporarily unfix position
         d.fx = d.x;
@@ -927,7 +1251,7 @@ const CitationNetworkPage: React.FC = () => {
       d.fy = event.y;
     }
 
-    function dragended(event: any, d: any) {
+    function dragended(_event: any, _d: any) {
       if (useTreeLayout) {
         // Keep node at dragged position in tree layout
         // d.fx and d.fy remain set
@@ -958,7 +1282,7 @@ const CitationNetworkPage: React.FC = () => {
     return () => {
       if ((svg as any).cleanup) (svg as any).cleanup();
     };
-  }, [network, id, useTreeLayout]);
+  }, [network, id, useTreeLayout, selectedTierLevel, selectedTierLevelDepth2, selectedDepth2TierLevels, depth1Tiers, depth2Tiers, references, showTopOnly]);
 
   const handleZoomIn = () => {
     if (svgRef.current) {
@@ -1048,7 +1372,6 @@ const CitationNetworkPage: React.FC = () => {
             >
               <MenuItem value={1}>1 Level</MenuItem>
               <MenuItem value={2}>2 Levels</MenuItem>
-              <MenuItem value={3}>3 Levels</MenuItem>
             </Select>
           </FormControl>
 
@@ -1078,69 +1401,15 @@ const CitationNetworkPage: React.FC = () => {
             <Typography variant="body2">Main Paper</Typography>
           </Box>
           <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ color: '#4CAF50', fontSize: 18 }} />
-            <Typography variant="body2">Depth 0 (Direct)</Typography>
+            <Circle sx={{ color: '#1565c0', fontSize: 18 }} />
+            <Typography variant="body2">Level 1 (Direct)</Typography>
           </Box>
           <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ color: '#2196F3', fontSize: 18 }} />
-            <Typography variant="body2">Depth 1 (Nested)</Typography>
-          </Box>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ color: '#9C27B0', fontSize: 18 }} />
-            <Typography variant="body2">Depth 2 (Deep)</Typography>
-          </Box>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ color: '#90A4AE', fontSize: 16 }} />
-            <Typography variant="body2">Depth 3+</Typography>
+            <Circle sx={{ color: '#ff9800', fontSize: 18 }} />
+            <Typography variant="body2">Level 2 (Nested)</Typography>
           </Box>
         </Stack>
 
-        {/* Relevance scores */}
-        <Typography variant="caption" color="textSecondary" gutterBottom display="block">
-          Relevance (darker = higher score):
-        </Typography>
-        <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap mb={2}>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ color: '#ffd700', fontSize: 20, filter: 'drop-shadow(0 0 3px #ff8c00)' }} />
-            <Typography variant="body2">⭐ Influential</Typography>
-          </Box>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ fontSize: 18 }}>
-              <svg width="18" height="18">
-                <circle cx="9" cy="9" r="8" fill="#4caf50" />
-              </svg>
-            </Circle>
-            <Typography variant="body2">80-100%</Typography>
-          </Box>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ fontSize: 18 }}>
-              <svg width="18" height="18">
-                <circle cx="9" cy="9" r="8" fill="#66BB6A" />
-              </svg>
-            </Circle>
-            <Typography variant="body2">60-80%</Typography>
-          </Box>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ fontSize: 18 }}>
-              <svg width="18" height="18">
-                <circle cx="9" cy="9" r="8" fill="#81C784" />
-              </svg>
-            </Circle>
-            <Typography variant="body2">40-60%</Typography>
-          </Box>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Circle sx={{ fontSize: 18 }}>
-              <svg width="18" height="18">
-                <circle cx="9" cy="9" r="8" fill="#A5D6A7" />
-              </svg>
-            </Circle>
-            <Typography variant="body2">&lt;40%</Typography>
-          </Box>
-        </Stack>
-
-        <Alert severity="info" sx={{ mt: 2 }}>
-          <strong>Tip:</strong> Click papers to rate • Drag to rearrange • Scroll to zoom • Use "Fetch Nested Refs" to load deeper levels
-        </Alert>
       </Paper>
 
       <Box display="flex" gap={2} mb={2} flexWrap="wrap">
@@ -1150,33 +1419,134 @@ const CitationNetworkPage: React.FC = () => {
           color="default"
           variant="outlined"
         />
+        {showTopOnly && depth1Tiers && depth1Tiers.length > 0 ? (
+          <>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Depth 1 Tier Level</InputLabel>
+              <Select
+                value={selectedTierLevel}
+                label="Depth 1 Tier Level"
+                onChange={(e) => setSelectedTierLevel(Number(e.target.value))}
+              >
+                {depth1Tiers.map((tier, index) => {
+                  // Tính số lượng cộng dồn từ tier 1 đến tier hiện tại
+                  const cumulativeCount = depth1Tiers.slice(0, index + 1).reduce((sum, t) => sum + t.nodeCount, 0);
+                  return (
+                    <MenuItem key={tier.tier} value={tier.tier}>
+                      Tier 1-{tier.tier} ({cumulativeCount} papers)
+                    </MenuItem>
+                  );
+                })}
+                <MenuItem value={0}>All Depth 1 Tiers ({depth1Tiers.reduce((sum, t) => sum + t.nodeCount, 0) || 0} papers)</MenuItem>
+              </Select>
+            </FormControl>
+            {depth2Tiers.length > 0 && (
+              <FormControl size="small" sx={{ minWidth: 140 }}>
+                <InputLabel>Depth 2 Tier Level</InputLabel>
+                <Select
+                  value={selectedTierLevelDepth2}
+                  label="Depth 2 Tier Level"
+                  onChange={(e) => setSelectedTierLevelDepth2(Number(e.target.value))}
+                >
+                  <MenuItem value={0}>None</MenuItem>
+                  {depth2Tiers.map((tier, index) => {
+                    const parentData = depth2ParentData[index];
+                    const parentName = parentData?.parentNode.title?.substring(0, 30) || `Parent ${tier.parentId}`;
+                    // Tính tổng số unique children thực tế (all tiers) của N parents đầu tiên
+                    const uniqueNodeIds = new Set<number>();
+                    depth2ParentData.slice(0, tier.tier).forEach(parent => {
+                      // Lấy tất cả children từ tất cả tiers của parent
+                      parent.children.forEach((child: any) => {
+                        uniqueNodeIds.add(child.id);
+                      });
+                    });
+                    const totalRefs = uniqueNodeIds.size;
+                    return (
+                      <MenuItem key={tier.tier} value={tier.tier}>
+                        Show {tier.tier} parent{tier.tier > 1 ? 's' : ''} ({totalRefs} refs)
+                      </MenuItem>
+                    );
+                  })}
+                </Select>
+              </FormControl>
+            )}
+            {/* Per-parent tier controls */}
+            {selectedTierLevelDepth2 > 0 && depth2ParentData.length > 0 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 1, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+                <Typography variant="caption" color="text.secondary">Per-Parent Tier Selection:</Typography>
+                {depth2ParentData.slice(0, selectedTierLevelDepth2).map((parentData, index) => {
+                  const currentTierLevel = selectedDepth2TierLevels[parentData.parentId] ?? 1;
+                  const parentName = parentData.parentNode.title?.substring(0, 25) || `Parent ${parentData.parentId}`;
+                  return (
+                    <Box key={parentData.parentId} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Typography variant="caption" sx={{ minWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {index + 1}. {parentName}
+                      </Typography>
+                      <FormControl size="small" sx={{ minWidth: 120 }}>
+                        <Select
+                          value={currentTierLevel}
+                          onChange={(e) => setSelectedDepth2TierLevels(prev => ({
+                            ...prev,
+                            [parentData.parentId]: Number(e.target.value)
+                          }))}
+                          sx={{ fontSize: '0.75rem', py: 0.5 }}
+                        >
+                          {parentData.tiers.map((tier, tierIndex) => {
+                            // Tính số lượng unique nodes từ tier 1 đến tier hiện tại của parent
+                            const uniqueNodeIds = new Set<number>();
+                            parentData.tiers.slice(0, tierIndex + 1).forEach(t => {
+                              t.nodeIds.forEach((id: number) => uniqueNodeIds.add(id));
+                            });
+                            const cumulativeCount = uniqueNodeIds.size;
+                            return (
+                              <MenuItem key={tier.tier} value={tier.tier}>
+                                Tier {tier.tier} ({cumulativeCount})
+                              </MenuItem>
+                            );
+                          })}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
+          </>
+        ) : (
+          <Tooltip title="Enable tier selection by adding references">
+            <Chip
+              icon={<FilterList />}
+              label="Tier Selection"
+              color="default"
+              variant="outlined"
+              sx={{ opacity: 0.6 }}
+            />
+          </Tooltip>
+        )}
         {showTopOnly && filteredCount.nodes > 0 && (
+          <>
+            <Chip
+              label={`Showing ${filteredCount.nodes} Papers`}
+              color="primary"
+              variant="outlined"
+            />
+          </>
+        )}
+        {!showTopOnly && (
           <Chip
-            icon={<FilterList />}
             label={`Showing ${filteredCount.nodes} Papers`}
             color="primary"
+            variant="outlined"
           />
         )}
-        <Chip
-          icon={<Timeline />}
-          label={showTopOnly ? `${filteredCount.edges} Citations (${network.edges.length} total)` : `${network.edges.length} Citations`}
-          color="secondary"
-          variant="outlined"
-        />
-        {references.filter(r => r.isInfluential).length > 0 && (
+
+        {/* {references.filter(r => r.isInfluential).length > 0 && (
           <Chip
             icon={<Star />}
             label={`${references.filter(r => r.isInfluential).length} Influential`}
             sx={{ bgcolor: '#ffd700', color: '#000', fontWeight: 'bold' }}
           />
-        )}
-        {references.filter(r => r.relevanceScore && r.relevanceScore > 0.7).length > 0 && (
-          <Chip
-            icon={<Star />}
-            label={`${references.filter(r => r.relevanceScore && r.relevanceScore > 0.7).length} High Relevance`}
-            sx={{ bgcolor: '#4caf50', color: '#fff' }}
-          />
-        )}
+        )} */}
       </Box>
 
       <Paper elevation={3} sx={{ p: 0, position: 'relative', overflow: 'hidden' }}>
@@ -1372,7 +1742,7 @@ const CitationNetworkPage: React.FC = () => {
                 {(() => {
                   // Find citation context from references
                   const citation = references.find(
-                    r => r.citedPaper?.id === selectedNode.id
+                    (r: any) => r.citedPaper?.id === selectedNode.id
                   );
                   return citation?.citationContext ? (
                     <>
@@ -1469,6 +1839,47 @@ const CitationNetworkPage: React.FC = () => {
                   </Box>
                 )}
 
+                {/* URL Information */}
+                {selectedNode.url && (
+                  <Box mt={2}>
+                    <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                      🔗 URL
+                    </Typography>
+                    <Box
+                      sx={{
+                        p: 1,
+                        bgcolor: 'rgba(33, 150, 243, 0.08)',
+                        borderRadius: 1,
+                        border: '1px solid rgba(33, 150, 243, 0.3)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                      }}
+                    >
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontFamily: 'monospace',
+                          fontSize: '0.85rem',
+                          wordBreak: 'break-all',
+                          flex: 1,
+                        }}
+                      >
+                        {selectedNode.url}
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          window.open(selectedNode.url, '_blank');
+                        }}
+                        title="Open URL"
+                      >
+                        <OpenInNew fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </Box>
+                )}
+
                 <Box display="flex" gap={2} mt={2}>
                   <Box flex={1}>
                     <Typography variant="subtitle2" color="textSecondary" gutterBottom>
@@ -1504,20 +1915,13 @@ const CitationNetworkPage: React.FC = () => {
                   {selectedNode.id === Number(id) && (
                     <Chip label="Current Paper" color="error" size="small" />
                   )}
-                  {selectedNode.isInfluential && (
+                  {/* {selectedNode.isInfluential && (
                     <Chip
                       label="⭐ Influential"
                       size="small"
                       sx={{ bgcolor: '#ffd700', color: '#000', fontWeight: 'bold' }}
                     />
-                  )}
-                  {selectedNode.relevanceScore && selectedNode.relevanceScore > 0.7 && (
-                    <Chip
-                      label="High Relevance"
-                      size="small"
-                      sx={{ bgcolor: '#4caf50', color: '#fff' }}
-                    />
-                  )}
+                  )} */}
                 </Box>
               </CardContent>
             </Card>
@@ -1592,7 +1996,7 @@ const CitationNetworkPage: React.FC = () => {
                         startIcon={<Edit />}
                         onClick={() => {
                           const citation = references.find(
-                            r => r.citedPaper?.id === selectedNode.id
+                            (r: any) => r.citedPaper?.id === selectedNode.id
                           );
                           if (citation) {
                             setEditingNode(citation.id);
@@ -1603,31 +2007,6 @@ const CitationNetworkPage: React.FC = () => {
                         color="primary"
                       >
                         Manual Rate
-                      </Button>
-
-                      <Button
-                        variant="outlined"
-                        fullWidth
-                        startIcon={autoRateMutation.isPending ? <CircularProgress size={20} /> : <AutoAwesome />}
-                        onClick={() => {
-                          const citation = references.find(
-                            r => r.citedPaper?.id === selectedNode.id
-                          );
-                          if (citation) {
-                            autoRateMutation.mutate(citation.id);
-                          }
-                        }}
-                        disabled={autoRateMutation.isPending}
-                        sx={{
-                          borderColor: '#9c27b0',
-                          color: '#9c27b0',
-                          '&:hover': {
-                            borderColor: '#7b1fa2',
-                            bgcolor: 'rgba(156, 39, 176, 0.04)',
-                          },
-                        }}
-                      >
-                        {autoRateMutation.isPending ? 'AI Rating...' : 'AI Auto-Rate'}
                       </Button>
                     </Stack>
                   ) : (
@@ -1801,7 +2180,7 @@ const CitationNetworkPage: React.FC = () => {
                                       />
                                     )}
 
-                                    {ref.isInfluential && (
+                                    {/* {ref.isInfluential && (
                                       <Chip
                                         label="⭐ Influential"
                                         size="small"
@@ -1812,7 +2191,7 @@ const CitationNetworkPage: React.FC = () => {
                                           color: '#000',
                                         }}
                                       />
-                                    )}
+                                    )} */}
                                   </Box>
 
                                   {ref.citationContext && (

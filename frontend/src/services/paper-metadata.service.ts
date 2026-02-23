@@ -18,6 +18,15 @@ export interface ExtractedMetadata {
   references?: {
     title?: string;
     doi?: string;
+    authors?: string;
+    year?: number;
+    journal?: string;
+    url?: string;
+    venue?: string;
+    citationCount?: number;
+    influentialCitationCount?: number;
+    fieldsOfStudy?: string[];
+    isOpenAccess?: boolean;
   }[];
 }
 

@@ -20,15 +20,11 @@ export interface RegisterData {
   email: string;
   password: string;
   fullName: string;
-  affiliation?: string;
 }
 
 export interface UpdateProfileData {
   fullName?: string;
   avatarUrl?: string;
-  bio?: string;
-  affiliation?: string;
-  researchInterests?: string[];
 }
 
 // Paper types
@@ -48,6 +44,7 @@ export interface Paper {
   updatedAt: string;
   status: 'to_read' | 'reading' | 'completed';
   favorite: boolean;
+  isReference?: boolean;
 }
 
 export interface CreatePaperData {
@@ -60,6 +57,7 @@ export interface CreatePaperData {
   url?: string;
   keywords?: string[];
   tagIds?: number[];
+  isReference?: boolean;
   references?: {
     title: string;
     authors?: string;
@@ -145,7 +143,6 @@ export interface Note {
   id: number;
   title: string;
   content: string;
-  highlightedText?: string;
   pageNumber?: number;
   paperId: number;
   paper?: Paper;
@@ -157,7 +154,6 @@ export interface Note {
 export interface CreateNoteData {
   content: string;
   paperId: number;
-  highlightedText?: string;
   pageNumber?: number;
 }
 
@@ -227,6 +223,15 @@ export interface CitationNetwork {
     source: number;
     target: number;
   }[];
+  tiers?: {
+    tier: number;
+    minScore: number;
+    maxScore: number;
+    nodeIds: number[];
+    nodeCount: number;
+    label: string;
+    quintile?: string; // "Top 20%", "Top 40%", etc.
+  }[];
 }
 
 export interface CitationStats {
@@ -294,4 +299,30 @@ export interface ApiError {
   statusCode: number;
   message: string;
   error?: string;
+}
+
+// Library types
+export interface Library {
+  id: number;
+  userId: number;
+  name: string;
+  description?: string;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface CreateLibraryData {
+  name: string;
+  description?: string;
+}
+
+export interface UpdateLibraryData {
+  name?: string;
+  description?: string;
+}
+
+export interface LibraryPaper {
+  libraryId: number;
+  paperId: number;
+  addedAt: string;
 }

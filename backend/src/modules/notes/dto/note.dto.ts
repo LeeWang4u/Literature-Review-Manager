@@ -19,11 +19,6 @@ export class CreateNoteDto {
   @IsInt()
   paperId: number;
 
-  @ApiProperty({ description: 'Highlighted text (optional)', required: false })
-  @IsOptional()
-  @IsString()
-  highlightedText?: string;
-
   @ApiProperty({ description: 'Page number (optional)', required: false })
   @IsOptional()
   @IsInt()

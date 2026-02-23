@@ -22,12 +22,12 @@ import {
 } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
-import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, LibraryAdd, ArrowBack } from '@mui/icons-material';
+import { AccountTree, Edit, Delete, CloudUpload, PictureAsPdf, StickyNote2, ArrowBack, FolderOpen, TransformOutlined } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { paperService } from '@/services/paper.service';
 import { pdfService } from '@/services/pdf.service';
 import { noteService } from '@/services/note.service';
-import { libraryService } from '@/services/library.service';
+import { AddToLibraryModal } from '@/components/libraries/AddToLibraryModal';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -35,23 +35,34 @@ import { PdfUploader } from '@/components/pdf/PdfUploader';
 import { PdfViewer } from '@/components/pdf/PdfViewer';
 import { AiSummaryCard } from '@/components/summary/AiSummaryCard';
 import { ChatBox } from '@/components/chat/ChatBox';
+import { Paper as PaperType } from '@/types';
 
 const PaperDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showUploader, setShowUploader] = useState(false);
+  const [showLibraryModal, setShowLibraryModal] = useState(false);
 
   const [openPopupDelete, setOpenPopupDelete] = useState(false);
 
-
-
-
-  const { data: paper, isLoading, error } = useQuery({
+  const { data: paper, isLoading, error } = useQuery<PaperType>({
     queryKey: ['paper', id],
     queryFn: () => paperService.getById(Number(id)),
     enabled: !!id,
+    retry: false,
   });
+
+  // Handle errors with redirect
+  useEffect(() => {
+    if (error) {
+      const err = error as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Paper not found or you do not have access to this paper');
+        navigate('/papers');
+      }
+    }
+  }, [error, navigate]);
 
   const [status, setStatus] = useState('to_read');
   const [favorite, setFavorite] = useState(false);
@@ -68,36 +79,30 @@ const PaperDetailPage: React.FC = () => {
     queryKey: ['pdfs', id],
     queryFn: () => pdfService.getByPaper(Number(id)),
     enabled: !!id,
+    refetchOnMount: 'always',  // Always refetch when component mounts
+    staleTime: 0,  // Data is immediately stale, allowing refetch
   });
 
   // Fetch notes count for this paper
-  const { data: notes = [] } = useQuery({
+  const { data: notes = [], error: notesError } = useQuery({
     queryKey: ['notes', id],
     queryFn: () => noteService.getByPaper(Number(id)),
     enabled: !!id,
+    retry: false,
   });
 
+  // Handle notes errors with redirect
+  useEffect(() => {
+    if (notesError) {
+      const err = notesError as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Unable to load notes - you do not have access to this paper');
+        navigate('/papers');
+      }
+    }
+  }, [notesError, navigate]);
 
 
-  const { data: isInLibrary = false } = useQuery({
-    queryKey: ['inLibrary', id],
-    queryFn: () => libraryService.getInLibrary(Number(id)),
-  });
-
-  // Add to library mutation
-  const addToLibraryMutation = useMutation({
-    mutationFn: () => libraryService.addToLibrary({
-      paperId: Number(id),
-      // status: ReadingStatus.TO_READ
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['library'] });
-      toast.success('Paper added to library!');
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to add to library');
-    },
-  });
 
   // Delete paper mutation
   const deleteMutation = useMutation({
@@ -110,6 +115,21 @@ const PaperDetailPage: React.FC = () => {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || 'Failed to delete paper');
+    },
+  });
+
+  // Convert reference to research paper mutation
+  const convertMutation = useMutation({
+    mutationFn: () => paperService.convertToResearch(Number(id)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['paper', id] });
+      queryClient.invalidateQueries({ queryKey: ['papers'] });
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+      queryClient.invalidateQueries({ queryKey: ['library-statistics'] });
+      toast.success('Paper converted to research paper and added to default library!');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Failed to convert paper');
     },
   });
 
@@ -169,11 +189,6 @@ const PaperDetailPage: React.FC = () => {
     } catch {
       toast.error('Update failed');
     }
-  };
-
-
-  const handleAddToLibrary = () => {
-    addToLibraryMutation.mutate();
   };
 
   const handleDelete = () => {
@@ -238,26 +253,25 @@ const PaperDetailPage: React.FC = () => {
                 {paper.title}
               </Typography>
               <Box display="flex" gap={1}>
-                {!isInLibrary && (
-                  <Tooltip title="Add to Library">
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      startIcon={<LibraryAdd />}
-                      onClick={handleAddToLibrary}
-                      disabled={addToLibraryMutation.isPending}
-                      sx={{ mr: 1 }}
+                {paper.isReference ? (
+                  <Tooltip title="Convert to Research Paper">
+                    <IconButton
+                      color="success"
+                      onClick={() => convertMutation.mutate()}
+                      disabled={convertMutation.isPending}
                     >
-                      Add to Library
-                    </Button>
+                      <TransformOutlined />
+                    </IconButton>
                   </Tooltip>
-                )}
-                {isInLibrary && (
-                  <Chip
-                    label="In Library"
-                    color="success"
-                    sx={{ mr: 1, height: 36 }}
-                  />
+                ) : (
+                  <Tooltip title="Add to Library">
+                    <IconButton
+                      color="primary"
+                      onClick={() => setShowLibraryModal(true)}
+                    >
+                      <FolderOpen />
+                    </IconButton>
+                  </Tooltip>
                 )}
                 <Tooltip title="Edit Paper">
                   <IconButton
@@ -286,7 +300,6 @@ const PaperDetailPage: React.FC = () => {
               </Typography>
 
               <Box display="flex" gap={1}>
-                {isInLibrary && (
                   <Box display="flex" alignItems="center" gap={1}>
                     {/* Dropdown chọn trạng thái */}
                     <FormControl size="small" variant="outlined">
@@ -317,9 +330,6 @@ const PaperDetailPage: React.FC = () => {
                       )}
                     </IconButton>
                   </Box>
-                )
-
-                }
               </Box>
 
             </Box>
@@ -342,7 +352,17 @@ const PaperDetailPage: React.FC = () => {
               {paper.url && (
                 <Typography variant="body2">
                   <strong>URL:</strong>{' '}
-                  <a href={paper.url} target="_blank" rel="noopener noreferrer">
+                  <a 
+                    href={paper.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    style={{ 
+                      wordBreak: 'break-all', 
+                      overflowWrap: 'break-word',
+                      display: 'inline-block',
+                      maxWidth: '100%'
+                    }}
+                  >
                     {paper.url}
                   </a>
                 </Typography>
@@ -366,7 +386,7 @@ const PaperDetailPage: React.FC = () => {
               </Typography>
               <Box>
                 {paper.tags && paper.tags.length > 0 ? (
-                  paper.tags.map((tag) => (
+                  paper.tags.map((tag: any) => (
                     <Chip key={tag.id} label={tag.name} sx={{ mr: 1, mb: 1 }} />
                   ))
                 ) : (
@@ -469,6 +489,16 @@ const PaperDetailPage: React.FC = () => {
             paperContext={paper.abstract}
           />
         </Container>
+
+        {/* Add to Library Modal */}
+        <AddToLibraryModal
+          paperId={paper.id}
+          isOpen={showLibraryModal}
+          onClose={() => setShowLibraryModal(false)}
+          onSuccess={() => {
+            toast.success('Library updated successfully');
+          }}
+        />
       </MainLayout>
     </>
   );

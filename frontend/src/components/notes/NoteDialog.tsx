@@ -25,7 +25,6 @@ interface NoteDialogProps {
 export interface NoteFormData {
   title: string;
   content: string;
-  highlightedText?: string;
   pageNumber?: number;
 }
 
@@ -51,7 +50,6 @@ export const NoteDialog: React.FC<NoteDialogProps> = ({
     defaultValues: {
       title: '',
       content: '',
-      highlightedText: '',
       pageNumber: undefined,
     },
   });
@@ -62,14 +60,12 @@ export const NoteDialog: React.FC<NoteDialogProps> = ({
       reset({
         title: existingNote.title,
         content: existingNote.content,
-        highlightedText: existingNote.highlightedText || '',
         pageNumber: existingNote.pageNumber || undefined,
       });
     } else if (open && !existingNote) {
       reset({
         title: '',
         content: '',
-        highlightedText: '',
         pageNumber: undefined,
       });
     }
@@ -164,31 +160,6 @@ export const NoteDialog: React.FC<NoteDialogProps> = ({
                   rows={8}
                   error={!!errors.content}
                   helperText={errors.content?.message}
-                  disabled={isLoading}
-                />
-              )}
-            />
-
-            {/* Highlighted Text */}
-            <Controller
-              name="highlightedText"
-              control={control}
-              rules={{
-                maxLength: {
-                  value: 1000,
-                  message: 'Highlighted text must not exceed 1000 characters',
-                },
-              }}
-              render={({ field }) => (
-                <TextField
-                  {...field}
-                  label="Highlighted Text (Optional)"
-                  placeholder="Copy and paste text from the paper that you want to reference"
-                  fullWidth
-                  multiline
-                  rows={3}
-                  error={!!errors.highlightedText}
-                  helperText={errors.highlightedText?.message || 'Optional: Text from the paper you want to highlight'}
                   disabled={isLoading}
                 />
               )}

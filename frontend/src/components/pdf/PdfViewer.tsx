@@ -36,7 +36,6 @@ interface PdfViewerProps {
 
 export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
   const queryClient = useQueryClient();
-  const [localPdfFiles, setLocalPdfFiles] = useState<PdfFile[]>(pdfFiles);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState<string>('');
@@ -45,9 +44,22 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => pdfService.delete(id),
-    onSuccess: (_data, id) => {
-      setLocalPdfFiles((prev) => prev.filter((pdf) => pdf.id !== id));
-      queryClient.invalidateQueries({ queryKey: ['pdfs', paperId] });
+    onSuccess: async (_data, deletedId) => {
+      // Optimistically update cache by removing the deleted PDF
+      const currentPdfs = queryClient.getQueryData(['pdfs', String(paperId)]);
+      if (currentPdfs) {
+        queryClient.setQueryData(
+          ['pdfs', String(paperId)], 
+          (currentPdfs as any[]).filter(pdf => pdf.id !== deletedId)
+        );
+      }
+      
+      // Then refetch to ensure server state is correct
+      await queryClient.refetchQueries({ 
+        queryKey: ['pdfs', String(paperId)],
+        type: 'active'
+      });
+      
       toast.success('PDF deleted successfully!');
       setDeletingId(null);
     },
@@ -135,7 +147,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
     });
   };
 
-  if (localPdfFiles.length === 0) {
+  if (pdfFiles.length === 0) {
     return (
       <Box
         sx={{
@@ -158,14 +170,22 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
   return (
     <Box>
       <Box display="flex" flexDirection="column" gap={2}>
-        {localPdfFiles.map((pdf) => (
+        {pdfFiles.map((pdf) => (
           <Card key={pdf.id} variant="outlined">
             <CardContent>
               <Box display="flex" alignItems="center" gap={2}>
-                <PictureAsPdf sx={{ fontSize: 40, color: 'error.main' }} />
+                <PictureAsPdf sx={{ fontSize: 40, color: 'error.main', flexShrink: 0 }} />
                 
-                <Box flex={1}>
-                  <Typography variant="subtitle1" fontWeight="bold">
+                <Box flex={1} minWidth={0}>
+                  <Typography 
+                    variant="subtitle1" 
+                    fontWeight="bold"
+                    sx={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
                     {pdf.originalFilename}
                   </Typography>
                   <Box display="flex" gap={1} alignItems="center" mt={0.5}>
@@ -187,7 +207,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ pdfFiles, paperId }) => {
                   </Box>
                 </Box>
 
-                <Box display="flex" gap={1}>
+                <Box display="flex" gap={1} flexShrink={0}>
                   <Tooltip title="Preview PDF">
                     <IconButton
                       color="primary"

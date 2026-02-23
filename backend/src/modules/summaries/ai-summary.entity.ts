@@ -24,12 +24,6 @@ export class AiSummary {
   @Column({ name: 'key_findings', type: 'json', nullable: true })
   keyFindings: string[];
 
-  @Column({ type: 'text', nullable: true })
-  methodology: string;
-
-  @Column({ type: 'text', nullable: true })
-  limitations: string;
-
   @CreateDateColumn({ name: 'generated_at' })
   generatedAt: Date;
 

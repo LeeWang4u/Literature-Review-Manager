@@ -24,44 +24,15 @@ export class Citation {
   @Index()
   citedPaperId: number;
 
-  @Column({ name: 'created_by' })
-  @Index()
-  createdBy: number;
-
-  @Column({ name: 'citation_context', type: 'text', nullable: true })
-  citationContext: string;
-
   @Column({ name: 'relevance_score', type: 'decimal', precision: 3, scale: 2, nullable: true })
   relevanceScore: number;
-
-  @Column({ name: 'is_influential', type: 'boolean', default: false })
-  isInfluential: boolean;
 
   // Hierarchical citation support
   @Column({ name: 'citation_depth', type: 'int', default: 0 })
   citationDepth: number; // 0 = direct citation, 1 = citation of citation, etc.
 
-  @Column({ name: 'parsed_authors', type: 'text', nullable: true })
-  parsedAuthors: string; // AI-parsed author names
-
-  @Column({ name: 'parsed_title', type: 'text', nullable: true })
-  parsedTitle: string; // AI-parsed clean title
-
-  @Column({ name: 'parsed_year', type: 'int', nullable: true })
-  parsedYear: number; // AI-parsed publication year
-
-  @Column({ name: 'parsing_confidence', type: 'decimal', precision: 3, scale: 2, nullable: true })
-  parsingConfidence: number; // AI confidence score (0-1)
-
-  @Column({ name: 'raw_citation', type: 'text', nullable: true })
-  rawCitation: string; // Original citation string before parsing
-
-  @Column({ name: 'note_id', nullable: true })
-  noteId: number; // Link to auto-generated note
-
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
-
   
   // @ApiProperty({ type: () => Paper })
   // @ApiHideProperty()

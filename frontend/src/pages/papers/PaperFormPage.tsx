@@ -54,6 +54,14 @@ interface PaperFormData {
     authors?: string;
     year?: number;
     doi?: string;
+    url?: string;
+    abstract?: string;
+    venue?: string;
+    citationCount?: number;
+    influentialCitationCount?: number;
+    fieldsOfStudy?: string[];
+    isOpenAccess?: boolean;
+    journal?: string;
   }[];
 }
 
@@ -70,9 +78,11 @@ const PaperFormPage: React.FC = () => {
   const [arxivMetadata, setArxivMetadata] = useState<any>(null);
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
   const [isSuggestingTags, setIsSuggestingTags] = useState(false);
+  // @ts-ignore - Variable used in future features
   const [tagConfidence, setTagConfidence] = useState<number>(0);
   const [allTagOptions, setAllTagOptions] = useState<TagOption[]>([]);
   const [aiSuggestedTagNames, setAiSuggestedTagNames] = useState<Set<string>>(new Set());
+  // @ts-ignore - Variable used in future features
   const [tempPaperId, setTempPaperId] = useState<number | null>(null);
 
   const [openDialog, setOpenDialog] = useState(false);
@@ -169,46 +179,36 @@ const PaperFormPage: React.FC = () => {
 
 
 
-  // const createMutation = useMutation({
-  //   mutationFn: (data: CreatePaperData) => paperService.create(data),
-  //   // onSuccess: (response) => {
-  //   //   if (response.success === false) {
-
-  //   //     if (response.data?.id) {
-  //   //       setExistingPaperId(response.data.id);
-  //   //       setOpenDialog(true);
-  //   //     }
-  //   //     return;
-  //   //   }
-  //   //   // Phần success
-  //   //   toast.success(response.message || 'Paper created successfully!');
-  //   onSuccess: () => {
-  //     toast.success('Paper created successfully!');
-  //     queryClient.invalidateQueries({ queryKey: ['papers'] });
-  //     queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-  //     navigate('/papers');
-  //   },
-  //   onError: (error: any) => {  // Handle real errors (network, server crash, etc.)
-  //     toast.error(error.message || 'Failed to create paper');
-  //   },
-  // });
-  // Update paper mutation
   const createMutation = useMutation({
   mutationFn: (data: CreatePaperData) => paperService.create(data),
-  onSuccess: () => {
+  onSuccess: (response: Paper) => {
     toast.success('Paper created successfully!');
     queryClient.invalidateQueries({ queryKey: ['papers'] });
     queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-    navigate('/papers');
+    
+    // Redirect to paper detail - response is Paper object with .id
+    const paperId = response?.id;
+    if (paperId) {
+      navigate(`/papers/${paperId}`);
+    } else {
+      navigate('/papers');
+    }
   },
   onError: (error: any) => {
     const status = error?.response?.status;
     const data = error?.response?.data;
     if (status === 409) {
       console.log('Paper already exists error response data:', data);
-      const existingId =  data?.data?.id ?? null;
+      // Check for existingPaperId in the error response
+      const existingId = data?.existingPaperId || data?.data?.id || null;
       console.log('Existing paper ID from error response:', existingId);
-      if (existingId) setExistingPaperId(existingId);
+      // if (existingId) {
+      //   // Redirect to existing paper
+      //   // toast.info('This paper already exists. Redirecting...');
+      //   navigate(`/papers/${existingId}`);
+      //   return;
+      // }
+      setExistingPaperId(existingId);
       setOpenDialog(true);
       return;
     }
@@ -289,6 +289,14 @@ const PaperFormPage: React.FC = () => {
         authors: ref.authors || undefined,
         year: ref.year || undefined,
         doi: ref.doi || undefined,
+        abstract: ref.abstract || undefined,  // ✅ Send abstract to backend
+        journal: ref.journal || undefined,
+        url: ref.url || undefined,
+        venue: ref.venue || undefined,
+        citationCount: ref.citationCount || 0,
+        influentialCitationCount: ref.influentialCitationCount || 0,
+        fieldsOfStudy: ref.fieldsOfStudy || [],
+        isOpenAccess: ref.isOpenAccess || false,
       })) || [],
     };
 
@@ -426,11 +434,18 @@ const PaperFormPage: React.FC = () => {
           authors: ref.authors || '',
           year: ref.year || undefined,
           doi: ref.doi || '',
+          url: ref.url || '',
+          abstract: ref.abstract || '',
+          venue: ref.venue || '',
+          citationCount: ref.citationCount || 0,
+          influentialCitationCount: ref.influentialCitationCount || 0,
+          fieldsOfStudy: ref.fieldsOfStudy || [],
+          isOpenAccess: ref.isOpenAccess || false,
         })) || [],
       });
 
       console.log('📝 FORM RESET WITH REFERENCES:', metadata.references?.length || 0);
-
+      console.log('Sample references in form:', metadata.references);
       // Mark metadata as extracted
       setMetadataExtracted(true);
 
@@ -472,103 +487,166 @@ const PaperFormPage: React.FC = () => {
     }
   };
 
-  const handleDownloadArxivPdf = async () => {
-    if (!arxivMetadata || !arxivMetadata.arxivId) {
-      toast.error('No ArXiv PDF available');
-      return;
-    }
+  // const handleDownloadArxivPdf = async () => {
+  //   if (!arxivMetadata || !arxivMetadata.arxivId) {
+  //     toast.error('No ArXiv PDF available');
+  //     return;
+  //   }
 
-    try {
-      toast.loading('Downloading PDF from ArXiv...', { duration: 2000 });
+  //   try {
+  //     toast.loading('Downloading PDF from ArXiv...', { duration: 2000 });
 
-      const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
+  //     const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
 
-      // Convert base64 to blob
-      const binaryString = atob(result.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const blob = new Blob([bytes], { type: 'application/pdf' });
+  //     // Convert base64 to blob
+  //     const binaryString = atob(result.data);
+  //     const bytes = new Uint8Array(binaryString.length);
+  //     for (let i = 0; i < binaryString.length; i++) {
+  //       bytes[i] = binaryString.charCodeAt(i);
+  //     }
+  //     const blob = new Blob([bytes], { type: 'application/pdf' });
 
-      // Create download link
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', result.filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+  //     // Create download link
+  //     const url = window.URL.createObjectURL(blob);
+  //     const link = document.createElement('a');
+  //     link.href = url;
+  //     link.setAttribute('download', result.filename);
+  //     document.body.appendChild(link);
+  //     link.click();
+  //     link.remove();
+  //     window.URL.revokeObjectURL(url);
 
-      toast.success(`PDF downloaded: ${result.filename}`);
-    } catch (error: any) {
-      console.error('Error downloading ArXiv PDF:', error);
-      toast.error('Failed to download PDF from ArXiv');
-    }
-  };
+  //     toast.success(`PDF downloaded: ${result.filename}`);
+  //   } catch (error: any) {
+  //     console.error('Error downloading ArXiv PDF:', error);
+  //     toast.error('Failed to download PDF from ArXiv');
+  //   }
+  // };
+
+  // const handleQuickSave = async () => {
+  //   // Get current form values
+  //   const formValues = control._formValues;
+
+  //   if (!formValues.title || !formValues.authors) {
+  //     toast.error('Please extract metadata first (title and authors are required)');
+  //     return;
+  //   }
+
+  //   const paperData: CreatePaperData = {
+  //     title: formValues.title,
+  //     authors: formValues.authors,
+  //     abstract: formValues.abstract || '',
+  //     publicationYear: formValues.publicationYear || new Date().getFullYear(),
+  //     journal: formValues.journal || '',
+  //     doi: formValues.doi || '',
+  //     url: formValues.url || '',
+  //     tagIds: formValues.tags?.map((tag: Tag) => tag.id) || [],
+  //   };
+
+  //   try {
+  //     // Step 1: Create paper
+  //     const createdPaper = await paperService.create(paperData);
+  //     queryClient.invalidateQueries({ queryKey: ['papers'] });
+  //     queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
+  //     console.log('Created paper:', createdPaper);
+
+  //     const paperId = createdPaper?.id;//createdPaper?.paperId || createdPaper?.data?.id;
+      
+  //     toast.success('Paper saved successfully! createdPaper?.id: ' + createdPaper?.id);
+
+  //     // Step 2: Auto-upload ArXiv PDF if available
+  //     if (arxivPdfAvailable && arxivMetadata && arxivMetadata.arxivId && paperId) {
+  //       try {
+  //         toast.loading('Uploading PDF from ArXiv...', { id: 'arxiv-upload' });
+
+  //         // Download PDF from ArXiv
+  //         const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
+
+  //         // Convert base64 to blob
+  //         const binaryString = atob(result.data);
+  //         const bytes = new Uint8Array(binaryString.length);
+  //         for (let i = 0; i < binaryString.length; i++) {
+  //           bytes[i] = binaryString.charCodeAt(i);
+  //         }
+  //         const blob = new Blob([bytes], { type: 'application/pdf' });
+
+  //         // Upload to server
+  //         await pdfService.uploadBlob(paperId, blob, result.filename);
+  //         queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.id] });
+
+  //         toast.success('PDF uploaded successfully!', { id: 'arxiv-upload' });
+  //       } catch (pdfError: any) {
+  //         console.error('Error auto-uploading PDF:', pdfError);
+  //         toast.error('Paper saved but PDF upload failed', { id: 'arxiv-upload' });
+  //       }
+  //     }
+
+  //     // Navigate to paper detail page
+  //     console.log('paperId:', createdPaper?.id);
+  //     navigate(`/papers/${createdPaper.id}`);
+  //   } catch (error: any) {
+  //     toast.error(error.response?.data?.message || 'Failed to save paper');
+  //   }
+  // };
 
   const handleQuickSave = async () => {
-    // Get current form values
-    const formValues = control._formValues;
+  const formValues = control._formValues;
 
-    if (!formValues.title || !formValues.authors) {
-      toast.error('Please extract metadata first (title and authors are required)');
-      return;
-    }
+  if (!formValues.title || !formValues.authors) {
+    toast.error('Please extract metadata first (title and authors are required)');
+    return;
+  }
 
-    const paperData: CreatePaperData = {
-      title: formValues.title,
-      authors: formValues.authors,
-      abstract: formValues.abstract || '',
-      publicationYear: formValues.publicationYear || new Date().getFullYear(),
-      journal: formValues.journal || '',
-      doi: formValues.doi || '',
-      url: formValues.url || '',
-      tagIds: formValues.tags?.map((tag: Tag) => tag.id) || [],
-    };
-
-    try {
-      // Step 1: Create paper
-      const createdPaper = await paperService.create(paperData);
-      queryClient.invalidateQueries({ queryKey: ['papers'] });
-      queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
-
-      toast.success('Paper saved successfully!');
-
-      // Step 2: Auto-upload ArXiv PDF if available
-      if (arxivPdfAvailable && arxivMetadata && arxivMetadata.arxivId) {
-        try {
-          toast.loading('Uploading PDF from ArXiv...', { id: 'arxiv-upload' });
-
-          // Download PDF from ArXiv
-          const result = await paperService.downloadArxivPdf(arxivMetadata.url || arxivMetadata.arxivId);
-
-          // Convert base64 to blob
-          const binaryString = atob(result.data);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          const blob = new Blob([bytes], { type: 'application/pdf' });
-
-          // Upload to server
-          await pdfService.uploadBlob(createdPaper.id, blob, result.filename);
-          queryClient.invalidateQueries({ queryKey: ['pdfs', createdPaper.id] });
-
-          toast.success('PDF uploaded successfully!', { id: 'arxiv-upload' });
-        } catch (pdfError: any) {
-          console.error('Error auto-uploading PDF:', pdfError);
-          toast.error('Paper saved but PDF upload failed', { id: 'arxiv-upload' });
-        }
-      }
-
-      // Navigate to paper detail page
-      navigate(`/papers/${createdPaper.id}`);
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to save paper');
-    }
+  const paperData: CreatePaperData = {
+    title: formValues.title,
+    authors: formValues.authors,
+    abstract: formValues.abstract || '',
+    publicationYear: formValues.publicationYear || new Date().getFullYear(),
+    journal: formValues.journal || '',
+    doi: formValues.doi || '',
+    url: formValues.url || '',
+    tagIds: formValues.tags?.map((tag: Tag) => tag.id) || [],
   };
+
+  try {
+    // Show loading toast for ArXiv papers
+    const isArxiv = arxivPdfAvailable && arxivMetadata?.arxivId;
+    if (isArxiv) {
+      toast.loading('Creating paper and downloading PDF from ArXiv...', { id: 'create-paper' });
+    }
+
+    /* =========================
+     * CREATE PAPER (Backend auto-downloads ArXiv PDF)
+     * ========================= */
+    const createdPaper = await paperService.create(paperData);
+    const paperId = createdPaper?.id;
+
+    if (!paperId) {
+      throw new Error('Failed to get paper ID from response');
+    }
+
+    console.log('Paper created with ID:', paperId);
+
+    if (isArxiv) {
+      toast.success('Paper created and PDF downloaded!', { id: 'create-paper' });
+    } else {
+      toast.success('Paper saved successfully!');
+    }
+
+    // Invalidate queries
+    queryClient.invalidateQueries({ queryKey: ['papers'] });
+    queryClient.invalidateQueries({ queryKey: ['paperStatistics'] });
+    queryClient.invalidateQueries({ queryKey: ['pdfs', String(paperId)] });
+
+    // Redirect to paper detail
+    navigate(`/papers/${paperId}`);
+  } catch (error: any) {
+    toast.dismiss('create-paper');
+    console.error('Create paper failed:', error);
+    toast.error(error.response?.data?.message || 'Failed to save paper');
+  }
+};
+
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
   const isLoading = loadingPaper || loadingTags;
@@ -699,38 +777,6 @@ const PaperFormPage: React.FC = () => {
                       </Grid>
                     </Grid>
 
-                    {/* ArXiv PDF Download & Quick Save */}
-                    {/* {arxivPdfAvailable && arxivMetadata && (
-                      <Box sx={{ mt: 2 }}>
-                        <Alert severity="success">
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <Box sx={{ flexGrow: 1 }}>
-                              <Typography variant="body2">
-                                <strong>PDF Available!</strong> This is an ArXiv paper with free PDF access.
-                              </Typography>
-                            </Box>
-                            <Button
-                              variant="outlined"
-                              color="success"
-                              size="small"
-                              onClick={handleDownloadArxivPdf}
-                            >
-                              Download PDF
-                            </Button>
-                            <Button
-                              variant="contained"
-                              color="success"
-                              size="small"
-                              onClick={handleQuickSave}
-                              startIcon={<Save />}
-                            >
-                              Save Paper
-                            </Button>
-                          </Box>
-                        </Alert>
-                      </Box>
-                    )} */}
-
                     {/* Quick Save for non-ArXiv papers */}
                     {metadataExtracted && !arxivPdfAvailable && (
                       <Box sx={{ mt: 2 }}>
@@ -743,6 +789,7 @@ const PaperFormPage: React.FC = () => {
                               variant="contained"
                               color="primary"
                               size="small"
+                              type='button'
                               onClick={handleQuickSave}
                               startIcon={<Save />}
                               sx={{ ml: 2 }}

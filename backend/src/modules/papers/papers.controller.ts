@@ -10,6 +10,7 @@ import {
   UseGuards,
   Request,
   ParseIntPipe,
+  Patch,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { PapersService } from './papers.service';
@@ -21,6 +22,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaperMetadataService } from './paper-metadata.service';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 import { CitationsService } from '../citations/citations.service';
+import { LibrariesService } from '../libraries/libraries.service';
 
 @ApiTags('Papers')
 @Controller('papers')
@@ -31,6 +33,7 @@ export class PapersController {
     private papersService: PapersService,
     private paperMetadataService: PaperMetadataService,
     private citationsService: CitationsService,
+    private librariesService: LibrariesService,
   ) { }
 
   @Post('extract-metadata')
@@ -64,7 +67,7 @@ export class PapersController {
     console.log(`   References found: ${metadata.references?.length || 0}`);
     if (metadata.references && metadata.references.length > 0) {
       console.log(`   First 3 references:`);
-      metadata.references.slice(0, 3).forEach((ref, i) => {
+      metadata.references.forEach((ref, i) => {
         console.log(`     ${i + 1}. ${ref.title?.substring(0, 50)}... (${ref.year || 'no year'})`);
       });
     }
@@ -157,8 +160,8 @@ export class PapersController {
   @ApiOperation({ summary: 'Get paper by ID' })
   @ApiResponse({ status: 200, description: 'Paper found' })
   @ApiResponse({ status: 404, description: 'Paper not found' })
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    return await this.papersService.findOne(id);
+  async findOne(@Param('id', ParseIntPipe) id: number, @Request() req) {
+    return await this.papersService.findOne(id, req.user.id);
   }
 
   @Put(':id')
@@ -197,6 +200,19 @@ export class PapersController {
     return await this.papersService.updateStatus(id, dto, req.user.id);
   }
 
+  @Post(':id/convert-to-research')
+  @ApiOperation({ summary: 'Convert reference paper to research paper' })
+  @ApiResponse({ status: 200, description: 'Paper converted successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden - not owner' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  @ApiResponse({ status: 409, description: 'Already a research paper' })
+  async convertToResearch(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req,
+  ) {
+    return await this.papersService.convertReferenceToResearch(id, req.user.id);
+  }
+
 
   @Get('library')
   @ApiOperation({ summary: 'Get all papers in user library (filterable)' })
@@ -209,6 +225,7 @@ export class PapersController {
     return this.papersService.getUserLibrary(req.user.id, status, favorite);
   }
 
+  /*
   @Post(':id/auto-rate-references')
   @ApiOperation({ summary: 'Auto-rate all references of a paper using AI' })
   @ApiResponse({ status: 200, description: 'References auto-rated successfully' })
@@ -218,6 +235,7 @@ export class PapersController {
   ) {
     return this.citationsService.autoRateAllReferences(id, req.user.id);
   }
+  */
 
   @Post(':id/fetch-references')
   @ApiOperation({ summary: 'Manually fetch and process references for any paper' })
@@ -228,6 +246,100 @@ export class PapersController {
     @Request() req,
   ) {
     return this.papersService.fetchReferencesForPaper(id, req.user.id);
+  }
+
+  @Get(':id/statistics')
+  @ApiOperation({ summary: 'Get statistics for a specific paper' })
+  @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  async getStatisticsForPaper(
+    @Request() req,
+  ) {
+    return this.papersService.getPaperStatusStatistics( req.user.id);
+  }
+
+  @Patch(':id/favorite')
+  @ApiOperation({ summary: 'Toggle favorite status of a paper' })
+  @ApiResponse({ status: 200, description: 'Favorite status updated successfully' })
+  @ApiResponse({ status: 404, description: 'Paper not found' })
+  async toggleFavorite(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('favorite') favorite: boolean,
+    @Request() req,
+  ) {
+    return this.papersService.toggleFavorite(id, favorite, req.user.id);
+  }
+
+  // ===== LIBRARY ENDPOINTS (migrated from library module) =====
+
+  @Get('library/filter')
+  @ApiOperation({ summary: 'Get filtered library papers (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Library items retrieved successfully' })
+  async getFilteredLibrary(
+    @Query('status') status?: string,
+    @Query('favorite') favorite?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
+    @Request() req?,
+  ) {
+    return this.papersService.getLibrary(req.user.id, {
+      status,
+      favorite: favorite === 'true' ? true : favorite === 'false' ? false : undefined,
+      page: page ? parseInt(page) : 1,
+      pageSize: pageSize ? parseInt(pageSize) : 10,
+      search,
+    });
+  }
+
+  @Get('library/statistics')
+  @ApiOperation({ summary: 'Get library statistics (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Statistics retrieved successfully' })
+  async getLibraryStatistics(@Request() req) {
+    return this.papersService.getPaperStatusStatistics(req.user.id);
+  }
+
+  @Put('library/:id/status')
+  @ApiOperation({ summary: 'Update paper status in library (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Status updated successfully' })
+  async updateLibraryStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('status') status: string,
+    @Request() req,
+  ) {
+    return this.papersService.updatePaperStatus(id, req.user.id, status);
+  }
+
+  @Delete('library/:id')
+  @ApiOperation({ summary: 'Remove paper from library (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Paper removed successfully' })
+  async removeFromLibrary(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req,
+  ) {
+    await this.papersService.removePaper(id, req.user.id);
+    return { message: 'Paper removed from library' };
+  }
+
+  @Patch('library/:id/favorite')
+  @ApiOperation({ summary: 'Toggle favorite in library (replaces library module)' })
+  @ApiResponse({ status: 200, description: 'Favorite updated successfully' })
+  async toggleLibraryFavorite(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('favorite') favorite: boolean,
+    @Request() req,
+  ) {
+    return this.papersService.toggleFavorite(id, favorite, req.user.id);
+  }
+
+  @Get(':paperId/libraries')
+  @ApiOperation({ summary: 'Get all libraries that contain this paper' })
+  @ApiResponse({ status: 200, description: 'Libraries retrieved successfully' })
+  async getLibrariesForPaper(
+    @Param('paperId', ParseIntPipe) paperId: number,
+    @Request() req,
+  ) {
+    return this.librariesService.getLibrariesForPaper(paperId, req.user.id);
   }
 
 }

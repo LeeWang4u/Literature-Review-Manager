@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import axiosInstance from '@/services/api';
 import { Box, CircularProgress, Typography, Button } from '@mui/material';
+// import toast from 'react-hot-toast';
 
 const PdfViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -19,6 +21,12 @@ const PdfViewPage: React.FC = () => {
         const url = window.URL.createObjectURL(blob);
         if (mounted) setBlobUrl(url);
       } catch (err: any) {
+        const status = err?.response?.status;
+        if (status === 404 || status === 403) {
+          // toast.error('PDF not found or you do not have access');
+          navigate('/papers');
+          return;
+        }
         if (mounted) setError(err?.response?.data?.message || 'Failed to load PDF');
       } finally {
         if (mounted) setLoading(false);
@@ -32,7 +40,7 @@ const PdfViewPage: React.FC = () => {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, navigate]);
 
   if (loading) {
     return (

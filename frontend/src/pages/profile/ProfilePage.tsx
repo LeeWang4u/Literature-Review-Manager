@@ -77,11 +77,6 @@ const ProfilePage: React.FC = () => {
               <Typography variant="body1" sx={{ mt: 1 }}>
                 <strong>Full Name:</strong> {user.fullName}
               </Typography>
-              {user.affiliation && (
-                <Typography variant="body1" sx={{ mt: 1 }}>
-                  <strong>Affiliation:</strong> {user.affiliation}
-                </Typography>
-              )}
               {user.createdAt && (
                 <Typography variant="body1" sx={{ mt: 1 }}>
                   <strong>Member Since:</strong>{' '}

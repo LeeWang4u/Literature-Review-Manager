@@ -26,14 +26,8 @@ export class Note {
   @Column({ type: 'text' })
   content: string;
 
-  @Column({ name: 'highlight_text', type: 'text', nullable: true })
-  highlightText: string;
-
   @Column({ name: 'page_number', nullable: true })
   pageNumber: number;
-
-  @Column({ length: 7, default: '#FBBF24' })
-  color: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

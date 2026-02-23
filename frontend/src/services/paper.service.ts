@@ -33,6 +33,7 @@ export const paperService = {
 
   create: async (data: CreatePaperData): Promise<Paper> => {
     const response = await axiosInstance.post<{ success: boolean; message: string; status: number; data: Paper }>('/papers', data);
+    console.log(response.data)
     return response.data.data;
   },
 
@@ -136,6 +137,12 @@ export const paperService = {
   // Fetch references for any paper
   fetchReferences: async (paperId: number): Promise<{ success: boolean; message: string; data: any }> => {
     const response = await axiosInstance.post(`/papers/${paperId}/fetch-references`);
+    return response.data;
+  },
+
+  // Convert reference paper to research paper
+  convertToResearch: async (id: number): Promise<Paper> => {
+    const response = await axiosInstance.post<Paper>(`/papers/${id}/convert-to-research`);
     return response.data;
   },
 

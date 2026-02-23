@@ -29,25 +29,6 @@ export class RegisterDto {
   @MaxLength(255)
   fullName: string;
 
-  @ApiProperty({
-    example: 'University of Science',
-    description: 'User affiliation',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  @MaxLength(255)
-  affiliation?: string;
-
-  @ApiProperty({
-    example: 'Machine Learning, Natural Language Processing',
-    description: 'Research interests',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  researchInterests?: string;
-
    @IsOptional()
   isActive?: boolean;
 }

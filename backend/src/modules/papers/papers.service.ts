@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger, Inject, forwardRef, ConflictException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { Paper } from './paper.entity';
@@ -9,20 +9,36 @@ import { UpdatePaperDto } from './dto/update-paper.dto';
 import { SearchPaperDto } from './dto/search-paper.dto';
 import { UpdatePaperStatusDto } from './dto/update-paper-status.dto';
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { LibraryService } from '../library/library.service';
 import { CitationsService } from '../citations/citations.service';
 import { CitationParserService } from '../citations/citation-parser.service';
 import { CitationMetricsService } from '../citations/citation-metrics.service';
 import { AIProviderService } from '../summaries/ai-provider.service';
 import { PaperMetadataService } from './paper-metadata.service';
 import { PdfService } from '../pdf/pdf.service';
+import { LibrariesService } from '../libraries/libraries.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
+/**
+ * Interface for ScimagoJR journal ranking data
+ */
+interface JournalRanking {
+  rank: number;
+  title: string;
+  sjr: number;           // SJR score
+  quartile: string;      // Q1, Q2, Q3, Q4
+  hIndex: number;        // H-index
+  categories: string;    // Subject categories
+}
+
 @Injectable()
-export class PapersService {
+export class PapersService implements OnModuleInit {
   private readonly logger = new Logger(PapersService.name);
-  
+
+  // 🔥 Cache for ScimagoJR journal rankings (loaded once at startup)
+  private journalRankingCache: Map<string, JournalRanking> = new Map();
+  private journalRankingLoaded = false;
+
   constructor(
     @InjectRepository(Paper)
     private papersRepository: Repository<Paper>,
@@ -33,15 +49,201 @@ export class PapersService {
     @InjectRepository(Note)
     private notesRepository: Repository<Note>,
 
-    private libraryService: LibraryService,
+
     private citationsService: CitationsService,
     private citationParserService: CitationParserService,
     private citationMetricsService: CitationMetricsService,
     private aiProviderService: AIProviderService,
     private paperMetadataService: PaperMetadataService,
+    private librariesService: LibrariesService,
     @Inject(forwardRef(() => PdfService))
     private pdfService: PdfService,
   ) { }
+
+  /**
+   * 🚀 Load ScimagoJR 2024 rankings on module initialization
+   */
+  async onModuleInit() {
+    await this.loadJournalRankings();
+  }
+
+  /**
+   * 📥 Parse and cache ScimagoJR CSV data
+   */
+  private async loadJournalRankings(): Promise<void> {
+    try {
+      const csvPath = path.join(__dirname, '../../../data/scimagojr_2024.csv');
+      
+      if (!fs.existsSync(csvPath)) {
+        this.logger.warn(`⚠️ ScimagoJR CSV not found at ${csvPath}, using fallback scoring`);
+        return;
+      }
+
+      this.logger.log(`📂 Loading ScimagoJR rankings from: ${csvPath}`);
+      const fileContent = fs.readFileSync(csvPath, 'utf-8');
+      const lines = fileContent.split('\n');
+      
+      let successCount = 0;
+      let errorCount = 0;
+
+      // Skip header (line 0): Rank;Sourceid;Title;Type;Issn;SJR;SJR Best Quartile;H index;...
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        try {
+          // Parse CSV (semicolon-separated)
+          const cols = line.split(';');
+          if (cols.length < 27) continue;
+
+          const rank = parseInt(cols[0]);
+          const title = cols[2].replace(/"/g, '').trim(); // Remove quotes
+          const sjrRaw = cols[5].replace(',', '.'); // Handle European decimal format (1,234 -> 1.234)
+          const sjr = parseFloat(sjrRaw);
+          const quartile = cols[6].trim();
+          const hIndex = parseInt(cols[7]);
+          const categories = cols[26] || '';
+
+          if (!title || isNaN(rank) || isNaN(sjr)) continue;
+
+          // Normalize title for better matching
+          const normalizedTitle = this.normalizeJournalName(title);
+
+          this.journalRankingCache.set(normalizedTitle, {
+            rank,
+            title,
+            sjr,
+            quartile,
+            hIndex,
+            categories,
+          });
+
+          // Add common abbreviations/variants for better matching
+          this.addJournalVariants(normalizedTitle, { rank, title, sjr, quartile, hIndex, categories });
+          
+          successCount++;
+        } catch (parseError) {
+          errorCount++;
+          if (errorCount <= 5) { // Only log first 5 errors
+            this.logger.debug(`Parse error at line ${i}: ${parseError.message}`);
+          }
+        }
+      }
+
+      this.journalRankingLoaded = true;
+      this.logger.log(`✅ Loaded ${successCount} journal rankings from ScimagoJR 2024`);
+      
+      if (errorCount > 0) {
+        this.logger.warn(`⚠️ ${errorCount} parsing errors (rows skipped)`);
+      }
+
+      // Log top 5 journals for verification
+      const topJournals = Array.from(this.journalRankingCache.entries())
+        .sort((a, b) => b[1].sjr - a[1].sjr) // Sort by SJR descending
+        .slice(0, 5);
+      
+      this.logger.log(`📊 Top 5 journals by SJR:`);
+      topJournals.forEach(([key, data]) => {
+        this.logger.log(`   ${data.rank}. ${data.title} (SJR: ${data.sjr.toFixed(3)}, ${data.quartile})`);
+      });
+
+    } catch (error) {
+      this.logger.error(`❌ Failed to load ScimagoJR rankings: ${error.message}`);
+      this.logger.error(error.stack);
+    }
+  }
+
+  /**
+   * 🔤 Normalize journal name for consistent matching
+   */
+  private normalizeJournalName(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, '') // Keep alphanumeric, spaces, hyphens
+      .replace(/\s+/g, ' ')      // Normalize multiple spaces
+      .trim();
+  }
+
+  /**
+   * 📝 Add common journal name variants for better matching
+   */
+  private addJournalVariants(normalizedTitle: string, ranking: JournalRanking): void {
+    // IEEE variants
+    if (normalizedTitle.includes('ieee transactions on')) {
+      const shortForm = normalizedTitle.replace('ieee transactions on', 'ieee trans');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+
+    // ACM variants
+    if (normalizedTitle.includes('acm transactions on')) {
+      const shortForm = normalizedTitle.replace('acm transactions on', 'acm trans');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+
+    // Journal of... variants
+    if (normalizedTitle.startsWith('journal of ')) {
+      const shortForm = normalizedTitle.replace('journal of ', 'j ');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+
+    // International Journal of... variants
+    if (normalizedTitle.includes('international journal of')) {
+      const shortForm = normalizedTitle.replace('international journal of', 'int j');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+  }
+
+  /**
+   * 🔍 Find best matching journal using fuzzy logic (3 strategies)
+   */
+  private findBestJournalMatch(venueName: string): JournalRanking | null {
+    const normalized = this.normalizeJournalName(venueName);
+    
+    // Strategy 1: Exact match
+    if (this.journalRankingCache.has(normalized)) {
+      return this.journalRankingCache.get(normalized)!;
+    }
+
+    // Strategy 2: Substring match (venue contains journal name or vice versa)
+    for (const [key, ranking] of this.journalRankingCache.entries()) {
+      if (normalized.includes(key) || key.includes(normalized)) {
+        if (Math.abs(normalized.length - key.length) < 15) { // Similar length
+          return ranking;
+        }
+      }
+    }
+
+    // Strategy 3: Word overlap (at least 60% of significant words match)
+    const venueWords = normalized.split(' ').filter(w => w.length > 3);
+    if (venueWords.length === 0) return null;
+
+    let bestMatch: JournalRanking | null = null;
+    let bestScore = 0;
+
+    for (const [key, ranking] of this.journalRankingCache.entries()) {
+      const keyWords = key.split(' ').filter(w => w.length > 3);
+      const matchCount = venueWords.filter(vw => 
+        keyWords.some(kw => kw.includes(vw) || vw.includes(kw))
+      ).length;
+
+      const score = matchCount / Math.max(venueWords.length, keyWords.length);
+      
+      if (score > bestScore && score >= 0.6) { // At least 60% match
+        bestScore = score;
+        bestMatch = ranking;
+      }
+    }
+
+    return bestMatch;
+  }
 
 
 
@@ -52,7 +254,7 @@ export class PapersService {
     this.logger.log(`📥 CREATE PAPER REQUEST - User ID: ${userId}`);
     this.logger.log(`${'='.repeat(80)}`);
     this.logger.log(`CreatePaperDto received: ${JSON.stringify(createPaperDto, null, 2)}`);
-    
+
     const { tagIds, references, ...paperData } = createPaperDto;
 
     // Debug: Log references with year data
@@ -65,37 +267,56 @@ export class PapersService {
         this.logger.log(`      Authors: ${ref.authors || 'N/A'}`);
         this.logger.log(`      Year: ${ref.year || 'N/A'}`);
         this.logger.log(`      DOI: ${ref.doi || 'N/A'}`);
+        this.logger.log(`      Abstract: ${ref.abstract ? `${ref.abstract.substring(0, 50)}...` : 'N/A'}`);
       });
       const withYear = references.filter((r: any) => r.year).length;
       const withDOI = references.filter((r: any) => r.doi).length;
       const withAuthors = references.filter((r: any) => r.authors).length;
+      const withAbstract = references.filter((r: any) => r.abstract).length;
       this.logger.log(`   Data completeness:`);
       this.logger.log(`     - With year: ${withYear}/${references.length}`);
       this.logger.log(`     - With DOI: ${withDOI}/${references.length}`);
       this.logger.log(`     - With authors: ${withAuthors}/${references.length}`);
+      this.logger.log(`     - With abstract: ${withAbstract}/${references.length}`);
     } else {
       this.logger.log(`\n📚 REFERENCES: None provided`);
     }
+    console.log(`references extracted`, references);
 
-    const whereConditions = [];
+    // Check for duplicate DOI or URL in user's papers (excluding reference papers)
     if (paperData.doi) {
-      whereConditions.push({ doi: paperData.doi, addedBy: userId, isReference: false });
+      const existingByDoi = await this.papersRepository.findOne({
+        where: {
+          doi: paperData.doi,
+          addedBy: userId,
+          isReference: false,
+        },
+      });
+
+      if (existingByDoi) {
+        // Return existing paper ID for FE to redirect
+        throw new ConflictException({
+          message: 'A paper with this DOI already exists in your library',
+          existingPaperId: existingByDoi.id,
+        });
+      }
     }
+
     if (paperData.url) {
-      whereConditions.push({ url: paperData.url, addedBy: userId, isReference: false });
-    }
-    if (whereConditions.length > 0) {
-      const existingPaper = await this.papersRepository.findOne({ where: whereConditions });
-      if (existingPaper) {
-        throw new HttpException(
-          {
-            success: false,
-            message: 'Bài báo này đã tồn tại trong thư viện của bạn.',
-            status: HttpStatus.CONFLICT,
-            data: { id: existingPaper.id },
-          },
-          HttpStatus.CONFLICT, // 409
-        );
+      const existingByUrl = await this.papersRepository.findOne({
+        where: {
+          url: paperData.url,
+          addedBy: userId,
+          isReference: false,
+        },
+      });
+
+      if (existingByUrl) {
+        // Return existing paper ID for FE to redirect
+        throw new ConflictException({
+          message: 'A paper with this URL already exists in your library',
+          existingPaperId: existingByUrl.id,
+        });
       }
     }
 
@@ -118,11 +339,15 @@ export class PapersService {
         .add(tagIds);
     }
 
-    // 🔥 Auto-download PDF from ArXiv if URL is ArXiv
+    // 🔥 Auto-download PDF from ArXiv if URL is ArXiv - WAIT for completion
     if (paperData.url && paperData.url.includes('arxiv.org')) {
-      this.autoDownloadArxivPdf(savedPaper.id, paperData.url, userId).catch(err => {
+      try {
+        await this.autoDownloadArxivPdf(savedPaper.id, paperData.url, userId);
+        this.logger.log(`✅ ArXiv PDF downloaded successfully for paper ${savedPaper.id}`);
+      } catch (err) {
         this.logger.error(`Failed to auto-download ArXiv PDF for paper ${savedPaper.id}: ${err.message}`);
-      });
+        // Don't throw - paper is already created, PDF download is a bonus feature
+      }
     }
 
     // Xử lý references với AI parsing và auto-download workflow
@@ -137,11 +362,15 @@ export class PapersService {
       this.logger.log(`\n⏭️  SKIPPING REFERENCE PROCESSING: No references provided`);
     }
 
-    const addToLibraryDto = {
-      paperId: savedPaper.id,
+    // Add paper to default library
+    try {
+      const defaultLibrary = await this.librariesService.createDefaultLibrary(userId);
+      await this.librariesService.addPaperToLibrary(defaultLibrary.id, savedPaper.id, userId);
+      this.logger.log(`\n📚 ADDED TO DEFAULT LIBRARY`);
+      this.logger.log(`   Library: ${defaultLibrary.name}`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to add paper to default library: ${error.message}`);
     }
-
-    await this.libraryService.addToLibrary(userId, addToLibraryDto);
 
     this.logger.log(`\n✅ PAPER CREATED SUCCESSFULLY`);
     this.logger.log(`   Paper ID: ${savedPaper.id}`);
@@ -151,7 +380,8 @@ export class PapersService {
     return {
       success: true,
       message: 'Paper created successfully. References are being processed in background.',
-      data: await this.findOne(savedPaper.id)
+      data: await this.findOne(savedPaper.id, userId)//,
+     // paperId: savedPaper.id, // Add paper ID for FE to redirect
     };
   }
 
@@ -191,19 +421,19 @@ export class PapersService {
     // Try to fetch from external sources using DOI or URL
     let references = [];
     let errorMessage = '';
-    
+
     this.logger.log(`\n🌐 Fetching references from external sources...`);
     this.logger.log(`   Using: ${paper.doi ? `DOI ${paper.doi}` : `URL ${paper.url}`}`);
-    
+
     try {
       const metadata = await this.paperMetadataService.extractMetadata(
-        paper.doi || paper.url,
+          paper.url  ||paper.doi,
       );
-      
+
       references = metadata.references || [];
       this.logger.log(`✅ API call successful`);
       this.logger.log(`   References returned: ${references.length}`);
-      
+
       if (references.length === 0) {
         this.logger.warn(`⚠️ External API returned 0 references for this paper`);
         errorMessage = 'External API found the paper but it has no references listed.';
@@ -217,8 +447,8 @@ export class PapersService {
       return {
         success: false,
         message: errorMessage || 'No references found.',
-        data: { 
-          referencesFound: 0, 
+        data: {
+          referencesFound: 0,
           referencesProcessed: 0,
           doi: paper.doi,
           url: paper.url,
@@ -229,7 +459,7 @@ export class PapersService {
     // Process references using the same workflow as paper creation
     this.logger.log(`\n🚀 STARTING REFERENCE PROCESSING...`);
     this.logger.log(`   Will process ${references.length} references in background`);
-    
+
     await this.processReferencesWithAutoDownload(paper, references, userId);
 
     return {
@@ -248,7 +478,7 @@ export class PapersService {
   private async enrichReferenceMetadata(ref: any): Promise<any> {
     let s2Data: any = null;
     let enrichmentMethod = 'none';
-    
+
     try {
       // Strategy 1: Try DOI first (most reliable)
       if (ref.doi) {
@@ -260,18 +490,18 @@ export class PapersService {
           this.logger.debug(`DOI lookup failed for ${ref.doi}: ${doiError.message}`);
         }
       }
-      
+
       // Strategy 2: Fallback to title search if DOI failed or unavailable
-      if (!s2Data && ref.title) {
-        try {
-          s2Data = await this.paperMetadataService.fetchSemanticScholarMetadata(ref.title);
-          enrichmentMethod = 'title';
-          this.logger.debug(`✅ Enriched via title: "${ref.title.substring(0, 40)}..."`);
-        } catch (titleError) {
-          this.logger.debug(`Title lookup failed: ${titleError.message}`);
-        }
-      }
-      
+      // if (!s2Data && ref.title) {
+      //   try {
+      //     s2Data = await this.paperMetadataService.fetchSemanticScholarMetadata(ref.title);
+      //     enrichmentMethod = 'title';
+      //     this.logger.debug(`✅ Enriched via title: "${ref.title.substring(0, 40)}..."`);
+      //   } catch (titleError) {
+      //     this.logger.debug(`Title lookup failed: ${titleError.message}`);
+      //   }
+      // }
+
       // If enrichment succeeded, merge data
       if (s2Data) {
         const enrichedRef = {
@@ -287,21 +517,21 @@ export class PapersService {
           enriched: true,
           enrichmentMethod,
         };
-        
+
         // Log abstract status
         if (enrichedRef.abstract && enrichedRef.abstract.trim() !== '') {
           this.logger.debug(`  📄 Abstract fetched (${enrichedRef.abstract.length} chars) via ${enrichmentMethod}`);
         } else {
           this.logger.debug(`  ⚠️ No abstract available from ${enrichmentMethod}`);
         }
-        
+
         return enrichedRef;
       }
-      
+
       // No enrichment succeeded
       this.logger.debug(`❌ Enrichment failed for: "${ref.title?.substring(0, 40)}..."`);
       return { ...ref, enriched: false };
-      
+
     } catch (error) {
       this.logger.debug(`Enrichment error: ${error.message}`);
       return { ...ref, enriched: false };
@@ -311,64 +541,186 @@ export class PapersService {
   /**
    * Calculate advanced priority score for reference
    */
-  private calculatePriorityScore(ref: any, mainPaperTitle: string): number {
+
+  /**
+   * 🏆 Hàm tính điểm uy tín tạp chí dựa trên ScimagoJR 2024 Ranking
+   * 
+   * Công thức:
+   * S_venue = {
+   *   20 nếu V ∈ Tier_High    (SJR >= 5)
+   *   10 nếu V ∈ Tier_Mid     (1 <= SJR < 5)
+   *   5  nếu V có tên nhưng không trong ranking
+   *   0  nếu V = null/empty
+   * }
+   * 
+   * @param {string | null} venueName - Tên tạp chí/hội nghị
+   * @returns {number} (0, 5, 10, 20)
+   */
+  private getJournalScore(venueName: string | null): number {
+    // 1. Mức 0 điểm: Null hoặc rỗng
+    if (!venueName || venueName.trim() === '') return 0;
+
+    // 2. Nếu đã load ranking từ ScimagoJR, dùng dữ liệu thực
+    if (this.journalRankingLoaded) {
+      const ranking = this.findBestJournalMatch(venueName);
+      
+      if (ranking) {
+        // Tính điểm dựa trên SJR score
+        let score = 0;
+
+        // Tier classification based on SJR
+        if (ranking.sjr >= 5) {
+          // Tier High: SJR >= 5 → 20 điểm
+          score = 20;
+          this.logger.debug(
+            `  📊 ScimagoJR Match [HIGH]: "${ranking.title}" ` +
+            `(Rank: #${ranking.rank}, SJR: ${ranking.sjr.toFixed(3)}, ${ranking.quartile}) → ${score}/20`
+          );
+        } else if (ranking.sjr >= 1) {
+          // Tier Mid: 1 <= SJR < 5 → 10 điểm
+          score = 10;
+          this.logger.debug(
+            `  📊 ScimagoJR Match [MID]: "${ranking.title}" ` +
+            `(Rank: #${ranking.rank}, SJR: ${ranking.sjr.toFixed(3)}, ${ranking.quartile}) → ${score}/20`
+          );
+        } else {
+          // Basic: SJR < 1 → 5 điểm
+          score = 5;
+          this.logger.debug(
+            `  📊 ScimagoJR Match [BASIC]: "${ranking.title}" ` +
+            `(Rank: #${ranking.rank}, SJR: ${ranking.sjr.toFixed(3)}, ${ranking.quartile}) → ${score}/20`
+          );
+        }
+
+        return score;
+      }
+
+      // Không tìm thấy trong ranking → 5 điểm (có tên venue nhưng không xác định được)
+      this.logger.debug(
+        `  ⚠️ No ScimagoJR match for: "${venueName}" → Fallback: 5/20 (Basic)`
+      );
+      return 5;
+    }
+
+    // 3. FALLBACK: Nếu CSV chưa load được, dùng keyword-based scoring
+    this.logger.debug(`  ⚠️ ScimagoJR not loaded, using keyword-based fallback for: "${venueName}"`);
+    
+    const name = venueName.toLowerCase().trim();
+
+    // Top-tier keywords (20 điểm) - cho các tạp chí siêu nổi tiếng
+    const highTierKeywords = [
+      'nature', 'science', 'cell', 'lancet', 'nejm', 'pnas',
+      'ieee transactions', 'acm transactions',
+      'neurips', 'icml', 'cvpr', 'iclr'
+    ];
+
+    // Mid-tier keywords (10 điểm)
+    const midTierKeywords = [
+      'ieee', 'acm', 'springer', 'elsevier', 'wiley',
+      'plos one', 'scientific reports', 'frontiers in'
+    ];
+
+    if (highTierKeywords.some(k => name.includes(k))) return 20;
+    if (midTierKeywords.some(k => name.includes(k))) return 10;
+
+    // Có tên venue nhưng không xác định được = 5 điểm
+    return 5;
+  }
+
+  private calculatePriorityScore = (ref: any): number => {
     let score = 0;
+    
+    this.logger.debug(`\nCalculating priority score for reference: "${ref.title?.substring(0, 50)}..."`);
+    // -----------------------------------------------------------
+    // 1. IMPACT SCORE (Tối đa 50 điểm) - QUAN TRỌNG NHẤT
+    // -----------------------------------------------------------
+    // Sử dụng Logarit để chấm điểm.
+    // Lý do: Sự khác biệt giữa 0 và 100 citation quan trọng hơn sự khác biệt giữa 1000 và 1100.
+    // Mốc chuẩn (Benchmark): 1000 citations = Đạt điểm tối đa phần citation thường.
 
-    // 1. Citation Count (0-30 points) - highly cited = more important
-    if (ref.citationCount) {
-      if (ref.citationCount >= 1000) score += 30;
-      else if (ref.citationCount >= 500) score += 25;
-      else if (ref.citationCount >= 100) score += 20;
-      else if (ref.citationCount >= 50) score += 15;
-      else if (ref.citationCount >= 10) score += 10;
-      else score += 5;
+    const citations = ref.citationCount || 0;
+
+    const influential = ref.influentialCitationCount || 0;
+
+    // a. Điểm Citation cơ bản (Max 35 điểm)
+    // log10(1000) = 3. Do đó chia cho 3 để chuẩn hóa về 0-1, rồi nhân 35.
+    if (citations > 0) {
+      const rawCiteScore = Math.log10(citations);
+      const normalizedCiteScore = Math.min(1, rawCiteScore / 3);
+      score += normalizedCiteScore * 35;
+      this.logger.debug(`  Citation count: ${citations}, rawCiteScore: ${rawCiteScore.toFixed(2)}, normalizedCiteScore: ${normalizedCiteScore.toFixed(2)}, points: ${(normalizedCiteScore * 35).toFixed(2)}`);
     }
 
-    // 2. Influential Citation Count (0-20 points)
-    if (ref.influentialCitationCount) {
-      if (ref.influentialCitationCount >= 100) score += 20;
-      else if (ref.influentialCitationCount >= 50) score += 15;
-      else if (ref.influentialCitationCount >= 10) score += 10;
-      else score += 5;
+    // b. Điểm Influential Citation (Max 15 điểm)
+    // Influential citations là "phiếu bầu chất lượng cao".
+    // Mốc chuẩn: 50 influential citations = Max điểm.
+    if (influential > 0) {
+      const rawInfScore = Math.log10(influential );
+      const normalizedInfScore = Math.min(1, rawInfScore / 2); // log10(100) approx 2
+      score += normalizedInfScore * 20;
+      this.logger.debug(`  Influential citations: ${influential}, rawInfScore: ${rawInfScore.toFixed(2)}, normalizedInfScore: ${normalizedInfScore.toFixed(2)}, points: ${(normalizedInfScore * 20).toFixed(2)}`);
     }
 
-    // 3. Publication Year (0-20 points) - prefer recent papers
+
+    // -----------------------------------------------------------
+    // 2. VENUE QUALITY (Tối đa 20 điểm)
+    // -----------------------------------------------------------
+    // if (ref.venue) {
+    //   const venue = ref.venue.toLowerCase();
+
+    //   // Tier 1: Các tạp chí/hội nghị hàng đầu (Danh sách nên config riêng)
+    //   const topTier = ['nature', 'science', 'cell', 'lancet', 'neurips', 'cvpr', 'icml', 'acl', 'ieee', 'acm'];
+
+    //   // Tier 2: Các từ khóa chỉ báo tạp chí khoa học nói chung
+    //   const midTier = ['journal', 'proceedings', 'conference', 'transactions', 'review', 'letters'];
+
+    //   if (topTier.some(t => venue.includes(t))) {
+    //     score += 20;
+    //   } else if (midTier.some(t => venue.includes(t))) {
+    //     score += 10;
+    //   } else {
+    //     score += 5; // Có tên venue nhưng lạ hoắc
+    //   }
+    // }
+
+    const journalScore = this.getJournalScore(ref.venue);
+    score += journalScore;
+    this.logger.debug(`  Venue: "${ref.venue || 'N/A'}", journalScore: ${journalScore}`);
+
+
+    // -----------------------------------------------------------
+    // 3. METADATA COMPLETENESS (Tối đa 15 điểm)
+    // -----------------------------------------------------------
+    // Với Literature Review, Abstract là thứ quan trọng nhất để đọc lướt.
+    // if (ref.abstract && ref.abstract.length > 50) {
+    //   score += 5;
+    // }
+    // Có DOI hoặc Link PDF giúp truy xuất nguồn gốc dễ dàng || ref.isOpenAccess 
+    if (ref.doi || ref.url) {
+      score += 10;
+      this.logger.debug(`  Has DOI or URL, +10 points`);
+    }
+
+
+    // -----------------------------------------------------------
+    // 4. RECENCY (Tối đa 15 điểm) - "Gia vị" thêm
+    // -----------------------------------------------------------
+    // Không trừ điểm bài cũ, chỉ thưởng điểm bài mới.
+    // Bài cũ vẫn có thể đạt 85/100 nếu citation cao.
     if (ref.year) {
       const currentYear = new Date().getFullYear();
-      const age = currentYear - ref.year;
-      if (age <= 2) score += 20;
-      else if (age <= 5) score += 15;
-      else if (age <= 10) score += 10;
-      else if (age <= 20) score += 5;
-    }
+      const age = Math.max(0, currentYear - ref.year);
 
-    // 4. Venue Quality (0-15 points) - top venues are more important
-    if (ref.venue) {
-      const topVenues = [
-        'nature', 'science', 'cell', 'lancet', 'jama',
-        'neurips', 'icml', 'iclr', 'cvpr', 'iccv', 'eccv', 'acl', 'emnlp',
-        'sigir', 'kdd', 'www', 'chi', 'usenix', 'osdi', 'sosp'
-      ];
-      const venueLower = ref.venue.toLowerCase();
-      if (topVenues.some(v => venueLower.includes(v))) {
-        score += 15;
-      } else {
-        score += 5; // Any published venue gets some points
-      }
+      if (age <= 2) score += 15;        // Rất mới (0-2 năm)
+      else if (age <= 5) score += 10;   // Mới (3-5 năm)
+      else if (age <= 10) score += 5;   // Khá (5-10 năm)
+      // Trên 10 năm: 0 điểm phần này (nhưng đã có điểm citation gánh)
     }
-
-    // 5. Has DOI (0-10 points) - downloadable
-    if (ref.doi && ref.doi.trim() !== '') {
-      score += 10;
-    }
-
-    // 6. Open Access (0-5 points) - easier to access
-    if (ref.isOpenAccess) {
-      score += 5;
-    }
-
-    return score;
-  }
+    this.logger.debug(`  Publication year: ${ref.year || 'N/A'}, age: ${ref.year ? new Date().getFullYear() - ref.year : 'N/A'}, points: ${score}`);
+    //this.logger.debug(`Score calculation: title="${ref.title?.substring(0, 50)}", normalizedCiteScore=${normalizedCiteScore}, journalScore=${journalScore}`);
+    // Làm tròn và đảm bảo không vượt quá 100 (phòng trường hợp edge case)
+    return Math.min(100, Math.round(score));
+  };
 
   /**
    * Dynamically select optimal number of references based on score distribution
@@ -376,17 +728,17 @@ export class PapersService {
    */
   private selectOptimalReferences(sortedRefs: any[]): any[] {
     if (sortedRefs.length === 0) return [];
-    
+
     // Strategy 1: Always take top-tier references (score >= 70)
     const topTier = sortedRefs.filter(r => r.priorityScore >= 70);
-    
+
     // Strategy 2: Add high-quality references (score >= 50) up to a reasonable limit
     const highQuality = sortedRefs.filter(r => r.priorityScore >= 50 && r.priorityScore < 70);
-    
+
     // Strategy 3: Find score gap to determine natural cutoff
     const scores = sortedRefs.map(r => r.priorityScore);
     let cutoffIndex = topTier.length + highQuality.length;
-    
+
     // Look for significant score drop (>15 points) after high-quality refs
     for (let i = cutoffIndex; i < Math.min(scores.length - 1, cutoffIndex + 20); i++) {
       const gap = scores[i] - scores[i + 1];
@@ -396,28 +748,28 @@ export class PapersService {
         break;
       }
     }
-    
-    // Constraints: min 5, max 10, prefer quality over quantity
-    const minRefs = 5;
-    const maxRefs = 10;
-    
+
+    // Constraints: min 10, max 30, prefer quality over quantity
+    const minRefs = 0;
+    const maxRefs = 30000;
+
     let selectedCount = Math.max(minRefs, Math.min(maxRefs, cutoffIndex));
-    
+
     // If we have too few high-quality refs, be more generous
     if (topTier.length + highQuality.length < minRefs) {
       selectedCount = Math.min(maxRefs, Math.max(minRefs, sortedRefs.length));
       this.logger.log(`⚠️ Limited high-quality refs, expanding selection to ${selectedCount}`);
     }
-    
+
     const selected = sortedRefs.slice(0, selectedCount);
-    
+
     this.logger.log(`\n📊 Selection Breakdown:`);
     this.logger.log(`  Top-tier (≥70): ${topTier.length}`);
     this.logger.log(`  High-quality (50-69): ${highQuality.length}`);
     this.logger.log(`  Medium (30-49): ${selected.filter(r => r.priorityScore >= 30 && r.priorityScore < 50).length}`);
     this.logger.log(`  Lower (<30): ${selected.filter(r => r.priorityScore < 30).length}`);
     this.logger.log(`  Score range: ${selected[0]?.priorityScore || 0} - ${selected[selected.length - 1]?.priorityScore || 0}`);
-    
+
     return selected;
   }
 
@@ -429,238 +781,123 @@ export class PapersService {
     references: any[],
     userId: number,
   ): Promise<void> {
-      this.logger.log(`\n🔍 Starting reference enrichment and processing for ${references.length} references...`);
-      
-      // Step 1: Enrich references with external metadata (parallel for speed)
-      const enrichmentPromises = references.map(ref => 
-        this.enrichReferenceMetadata(ref).catch(err => {
-          this.logger.debug(`Enrichment failed for "${ref.title?.substring(0, 40)}": ${err.message}`);
-          return { ...ref, enriched: false };
-        })
-      );
-      
-      const enrichedRefs = await Promise.all(enrichmentPromises);
-      const enrichedCount = enrichedRefs.filter(r => r.enriched).length;
-      this.logger.log(`✅ Enriched ${enrichedCount}/${references.length} references with external metadata`);
+    this.logger.log(`\n🔍 Starting reference enrichment and processing for ${references.length} references...`);
 
-      // Step 2: Calculate advanced priority scores
-      const refsWithScore = enrichedRefs.map(ref => ({
-        ...ref,
-        priorityScore: this.calculatePriorityScore(ref, savedPaper.title)
-      }));
+    const refsWithScore = references.map(ref => ({
+      ...ref,
+      priorityScore: this.calculatePriorityScore(ref)
+    }));
 
-      // Sort by priority
-      const allSortedRefs = refsWithScore
-        .filter(r => r.title && r.title.trim() !== '')
-        .sort((a, b) => b.priorityScore - a.priorityScore);
-      
-      // 🎯 DYNAMIC SELECTION: Calculate optimal number based on score distribution
-      const selectedRefs = this.selectOptimalReferences(allSortedRefs);
-      this.logger.log(`\n🎯 Dynamic Selection: Selected ${selectedRefs.length}/${allSortedRefs.length} high-quality references`);
+    // Sort by priority
+    const allSortedRefs = refsWithScore
+      .filter(r => r.title && r.title.trim() !== '')
+      .sort((a, b) => b.priorityScore - a.priorityScore);
 
-      // Log priority distribution
-      this.logger.log(`\n📊 Priority Score Distribution (selected ${selectedRefs.length}):`);
-      const scoreRanges = { '0-20': 0, '21-40': 0, '41-60': 0, '61-80': 0, '81-100': 0 };
-      selectedRefs.forEach(ref => {
-        const score = ref.priorityScore;
-        if (score <= 20) scoreRanges['0-20']++;
-        else if (score <= 40) scoreRanges['21-40']++;
-        else if (score <= 60) scoreRanges['41-60']++;
-        else if (score <= 80) scoreRanges['61-80']++;
-        else scoreRanges['81-100']++;
-      });
-      Object.entries(scoreRanges).forEach(([range, count]) => {
-        this.logger.log(`  ${range} points: ${count} refs`);
-      });
-      
-      // Log abstract availability with enrichment methods
-      const withAbstract = selectedRefs.filter(r => r.abstract && r.abstract.trim() !== '').length;
-      const enrichedViaDoi = selectedRefs.filter(r => r.enrichmentMethod === 'doi').length;
-      const enrichedViaTitle = selectedRefs.filter(r => r.enrichmentMethod === 'title').length;
-      
-      this.logger.log(`\n📄 Abstract & Enrichment Status:`);
-      this.logger.log(`  With abstract: ${withAbstract}/${selectedRefs.length} (${((withAbstract/selectedRefs.length)*100).toFixed(0)}%)`);
-      this.logger.log(`  Without abstract: ${selectedRefs.length - withAbstract}/${selectedRefs.length}`);
-      this.logger.log(`  Enriched via DOI: ${enrichedViaDoi}`);
-      this.logger.log(`  Enriched via Title: ${enrichedViaTitle}`);
-      this.logger.log(`  Not enriched: ${selectedRefs.length - enrichedViaDoi - enrichedViaTitle}`);
-      
-      // Top 5 references by score with abstract info
-      this.logger.log(`\n🏆 Top 5 References by Priority:`);
-      selectedRefs.slice(0, 5).forEach((ref, idx) => {
-        const abstractStatus = ref.abstract && ref.abstract.trim() !== '' 
-          ? `📄 ${ref.abstract.length}chars` 
-          : '❌ No abstract';
-        this.logger.log(`  ${idx + 1}. [Score: ${ref.priorityScore}] "${ref.title?.substring(0, 50)}..." (${ref.year || 'N/A'}, cited: ${ref.citationCount || 0}, ${abstractStatus})`);
-      });
-      this.logger.log('');
 
-      // Step 3: Process and save citations
-      let savedCount = 0;
-      let skippedCount = 0;
-      let aiParsedCount = 0;
-      let preExtractedCount = 0;
-      
-      this.logger.log(`\n💾 Saving ${selectedRefs.length} references to database...`);
-      
-      for (const ref of selectedRefs) {
-        // Skip invalid references
-        if ((!ref.title || ref.title.trim() === '') && (!ref.doi || ref.doi.trim() === '')) {
-          skippedCount++;
-          continue;
-        }
 
-        // ✅ OPTIMIZATION: Skip AI parsing if data is already complete from API
-        let parsed;
-        const hasCompleteData = ref.authors && ref.year && ref.title;
-        
-        if (hasCompleteData) {
-          // Use pre-extracted data from Semantic Scholar/CrossRef API
-          parsed = {
-            authors: ref.authors,
-            year: ref.year,
-            title: ref.title,
-            doi: ref.doi || '',
-            confidence: 1.0,  // High confidence - from official API
-            rawCitation: ref.title,
-          };
-          preExtractedCount++;
-          
-          if (preExtractedCount <= 3) {
-            this.logger.log(`  ✅ Using pre-extracted data (no AI parsing needed): "${ref.title.substring(0, 50)}..."`);
-            this.logger.log(`     → Authors: ${parsed.authors}`);
-            this.logger.log(`     → Year: ${parsed.year}`);
-            this.logger.log(`     → DOI: ${parsed.doi || 'N/A'}`);
-          }
-        } else {
-          // Only use AI parsing when data is incomplete
-          try {
-            parsed = await this.citationParserService.parseCitation(ref.title);
-            aiParsedCount++;
-            
-            if (aiParsedCount <= 3) {
-              this.logger.log(`  🤖 AI Parsed: "${ref.title.substring(0, 50)}..."`);
-              this.logger.log(`     → Authors: ${parsed.authors}`);
-              this.logger.log(`     → Year: ${parsed.year}`);
-              this.logger.log(`     → Title: ${parsed.title.substring(0, 50)}...`);
-              this.logger.log(`     → Confidence: ${(parsed.confidence * 100).toFixed(0)}%`);
-            }
-          } catch (error) {
-            this.logger.warn(`Failed to parse citation: ${error.message}`);
-            // Fallback to basic data
-            parsed = {
-              authors: ref.authors || 'Unknown',
-              year: ref.year || null,
-              title: ref.title,
-              doi: ref.doi || undefined,
-              confidence: 0.3,
-              rawCitation: ref.title,
-            };
-          }
-        }
+    // Step 3: Process and save citations
+    let savedCount = 0;
+    let skippedCount = 0;
+    let aiParsedCount = 0;
+    let preExtractedCount = 0;
 
-        const cleanDoi = parsed.doi || ref.doi || '';
-        let cleanTitle = parsed.title;
-        if (cleanTitle.length > 500) {
-          cleanTitle = cleanTitle.substring(0, 497) + '...';
-        }
+    // for (const ref of selectedRefs) {
+    for (const ref of allSortedRefs) {
+      // Skip invalid references
+      if ((!ref.title || ref.title.trim() === '') && (!ref.doi || ref.doi.trim() === '')) {
+        skippedCount++;
+        continue;
+      }
 
-        // Kiểm tra xem reference này đã tồn tại chưa (theo DOI)
-        let refPaper: Paper | null = null;
-        if (cleanDoi) {
-          refPaper = await this.papersRepository.findOne({
-            where: { doi: cleanDoi },
-          });
-        }
+      const cleanDoi = ref.doi || '';
+      let cleanTitle = ref.title || '';
+      if (cleanTitle.length > 500) {
+        cleanTitle = cleanTitle.substring(0, 497) + '...';
+      }
 
-        // Nếu chưa có thì thêm mới, đánh dấu là reference
-        if (!refPaper) {
-          this.logger.debug(`Creating new reference paper: ${cleanTitle.substring(0, 60)}...`);
-          refPaper = this.papersRepository.create({
-            title: cleanTitle || '',
-            authors: parsed.authors || 'Unknown',
-            publicationYear: parsed.year,
-            doi: cleanDoi || '',
-            abstract: ref.abstract || '',  // ✅ From enrichment
-            journal: ref.venue || '',       // ✅ From enrichment
-            isReference: true,
-            addedBy: userId,
-          });
-          await this.papersRepository.save(refPaper);
-        }
+      // Kiểm tra xem reference này đã tồn tại chưa (theo DOI hoặc URL của cùng user)
+      // KHÔNG PHÂN BIỆT isReference - tránh trùng với cả main paper và reference paper
+      let refPaper: Paper | null = null;
 
-        // Kiểm tra duplicate citation trước khi save
-        const existingCitation = await this.paperCitationsRepository.findOne({
+      if (cleanDoi) {
+        refPaper = await this.papersRepository.findOne({
           where: {
-            citingPaperId: savedPaper.id,
-            citedPaperId: refPaper.id,
+            doi: cleanDoi,
+            addedBy: userId,
           },
         });
-
-        if (!existingCitation) {
-          // Lưu quan hệ trích dẫn với enriched metadata
-          const newCitation = await this.paperCitationsRepository.save({
-            citingPaperId: savedPaper.id,
-            citedPaperId: refPaper.id,
-            createdBy: userId,
-            citationContext: ref.citationContext || null,
-            relevanceScore: ref.priorityScore ? ref.priorityScore / 100 : null, // Convert 0-100 to 0-1
-            isInfluential: ref.isInfluential || (ref.influentialCitationCount > 0) || false,
-            // AI parsing fields
-            citationDepth: 0,
-            parsedAuthors: parsed.authors,
-            parsedTitle: parsed.title,
-            parsedYear: parsed.year,
-            parsingConfidence: parsed.confidence,
-            rawCitation: parsed.rawCitation,
-          });
-          
-          this.logger.debug(`✅ Citation saved: Paper ${savedPaper.id} -> Ref ${refPaper.id} [Priority Score: ${ref.priorityScore}, Relevance: ${(ref.priorityScore / 100).toFixed(2)}, Citations: ${ref.citationCount || 0}, Abstract: ${ref.abstract ? 'Yes' : 'No'}]`);
-
-          // Auto-rate ALL references if we have content (no score threshold)
-          const hasContent = (savedPaper.abstract || savedPaper.fullText) && (refPaper.abstract || refPaper.fullText);
-          if (parsed.confidence > 0.5 && hasContent) {
-            this.logger.debug(`🤖 Triggering AI auto-rate for citation ${newCitation.id}...`);
-            this.citationsService.autoRateRelevance(newCitation.id).catch(err => {
-              this.logger.warn(`⚠️ Auto-rate failed for citation ${newCitation.id}: ${err.message}`);
-            });
-          } else if (!hasContent) {
-            this.logger.debug(`⏸️ Skipped auto-rate (no content): "${parsed.title.substring(0, 40)}..." [Citing has content: ${!!(savedPaper.abstract || savedPaper.fullText)}, Cited has content: ${!!refPaper.abstract}]`);
-          }
-
-          // Auto-download PDF for very high-priority references (score >= 70)
-          if (ref.priorityScore >= 70 && parsed.confidence > 0.5) {
-            this.logger.log(`🚀 Auto-download triggered: "${parsed.title.substring(0, 50)}..." [Score: ${ref.priorityScore}]`);
-            this.autoDownloadReferencePdf(refPaper, userId, 0).catch(err => {
-              this.logger.debug(`Auto-download failed: ${err.message}`);
-            });
-          }
-
-          savedCount++;
-        } else {
-          this.logger.debug(`⏭️ Skipped duplicate: Paper ${savedPaper.id} -> Ref ${refPaper.id}`);
-        }
       }
-      
-      const withAbstractCount = selectedRefs.filter(r => r.abstract && r.abstract.trim() !== '').length;
-      const autoRateEligible = selectedRefs.filter(r => {
-        const hasAbstract = r.abstract && r.abstract.trim() !== '';
-        return hasAbstract && (savedPaper.abstract || savedPaper.fullText);
-      }).length;
-      
-      this.logger.log(`\n✅ Reference Processing Complete:`);
-      this.logger.log(`   Total references received: ${references.length}`);
-      this.logger.log(`   Dynamically selected: ${selectedRefs.length} (based on score distribution)`);
-      this.logger.log(`   Enriched with external data: ${enrichedCount}`);
-      this.logger.log(`   Pre-extracted (from API): ${preExtractedCount}`);
-      this.logger.log(`   AI parsed (incomplete data): ${aiParsedCount}`);
-      this.logger.log(`   Successfully saved: ${savedCount}`);
-      this.logger.log(`   Skipped (invalid): ${skippedCount}`);
-      this.logger.log(`   With abstract from enrichment: ${withAbstractCount}/${selectedRefs.length}`);
-      this.logger.log(`   Eligible for AI auto-rate: ${autoRateEligible}/${savedCount}`);
-      this.logger.log(`   High-priority (score ≥60): ${selectedRefs.filter(r => r.priorityScore >= 60).length}`);
-      this.logger.log(`   Very high-priority (score ≥70): ${selectedRefs.filter(r => r.priorityScore >= 70).length}`);
-      this.logger.log('');
+
+      // Nếu không tìm thấy qua DOI, thử tìm qua URL
+      if (!refPaper && ref.url) {
+        refPaper = await this.papersRepository.findOne({
+          where: {
+            url: ref.url,
+            addedBy: userId,
+          },
+        });
+      }
+
+      // Nếu chưa có thì thêm mới, đánh dấu là reference
+      if (!refPaper) {
+        this.logger.debug(`Creating new reference paper: ${cleanTitle.substring(0, 60)}...`);
+        refPaper = this.papersRepository.create({
+          title: cleanTitle || '',
+          authors: ref.authors || 'Unknown',
+          publicationYear: ref.year,
+          doi: cleanDoi || '',
+          url: ref.url || '',
+          abstract: ref.abstract || '',  // ✅ From enrichment
+          journal: ref.venue || '',       // ✅ From enrichment
+          isReference: true,
+          addedBy: userId,
+        });
+        await this.papersRepository.save(refPaper);
+      } else {
+        this.logger.debug(`Found existing paper (reusing): ${refPaper.title.substring(0, 60)}... (ID: ${refPaper.id}, isReference: ${refPaper.isReference})`);
+      }
+
+      // Kiểm tra duplicate citation trước khi save
+      const existingCitation = await this.paperCitationsRepository.findOne({
+        where: {
+          citingPaperId: savedPaper.id,
+          citedPaperId: refPaper.id,
+        },
+      });
+
+      if (!existingCitation) {
+        // Lưu quan hệ trích dẫn với enriched metadata
+        const newCitation = await this.paperCitationsRepository.save({
+          citingPaperId: savedPaper.id,
+          citedPaperId: refPaper.id,
+          createdBy: userId,
+          citationContext: ref.citationContext || null,
+          relevanceScore: ref.priorityScore ? ref.priorityScore / 100 : null, // Convert 0-100 to 0-1
+          isInfluential: ref.isInfluential || (ref.influentialCitationCount > 0) || false,
+          // AI parsing fields
+          citationDepth: 0,
+          // parsedAuthors: parsed.authors,
+          // parsedTitle: parsed.title,
+          // parsedYear: parsed.year,
+          // parsingConfidence: parsed.confidence,
+          // rawCitation: parsed.rawCitation,
+        });
+
+        this.logger.debug(`✅ Citation saved: Paper ${savedPaper.id} -> Ref ${refPaper.id} [Priority Score: ${ref.priorityScore}, Relevance: ${(ref.priorityScore / 100).toFixed(2)}, Citations: ${ref.citationCount || 0}, Abstract: ${ref.abstract ? 'Yes' : 'No'}]`);
+
+        // Auto-download PDF for very high-priority references (score >= 70)
+        // if (ref.priorityScore >= 70) {
+        //   this.logger.log(`🚀 Auto-download triggered: "${ref.title?.substring(0, 50) || 'Unknown'}..." [Score: ${ref.priorityScore}]`);
+        //   this.autoDownloadReferencePdf(refPaper, userId, 0).catch(err => {
+        //     this.logger.debug(`Auto-download failed: ${err.message}`);
+        //   });
+        // }
+
+        savedCount++;
+      } else {
+        this.logger.debug(`⏭️ Skipped duplicate: Paper ${savedPaper.id} -> Ref ${refPaper.id}`);
+      }
+    }
   }
 
   async findAll(searchDto: SearchPaperDto, userId: number): Promise<{ data: Paper[]; meta: any }> {
@@ -685,9 +922,9 @@ export class PapersService {
     if (searchDto.year) {
       query.andWhere('paper.publicationYear = :year', { year: searchDto.year });
     } else if (searchDto.yearFrom && searchDto.yearTo) {
-      query.andWhere('paper.publicationYear BETWEEN :yearFrom AND :yearTo', { 
-        yearFrom: searchDto.yearFrom, 
-        yearTo: searchDto.yearTo 
+      query.andWhere('paper.publicationYear BETWEEN :yearFrom AND :yearTo', {
+        yearFrom: searchDto.yearFrom,
+        yearTo: searchDto.yearTo
       });
     } else if (searchDto.yearFrom) {
       query.andWhere('paper.publicationYear >= :yearFrom', { yearFrom: searchDto.yearFrom });
@@ -731,14 +968,21 @@ export class PapersService {
     };
   }
 
-  async findOne(id: number): Promise<Paper> {
+  async findOne(id: number, userId?: number): Promise<Paper> {
+    const whereCondition: any = { id };
+
+    // If userId provided, restrict to user's own papers
+    if (userId) {
+      whereCondition.addedBy = userId;
+    }
+
     const paper = await this.papersRepository.findOne({
-      where: { id },
+      where: whereCondition,
       relations: ['tags', 'user', 'pdfFiles', 'notes'],
     });
 
     if (!paper) {
-      throw new NotFoundException('Paper not found');
+      throw new NotFoundException('Paper not found or you do not have access to this paper');
     }
 
     return paper;
@@ -770,12 +1014,8 @@ export class PapersService {
   }
 
   async update(id: number, updatePaperDto: UpdatePaperDto, userId: number): Promise<Paper> {
-    const paper = await this.findOne(id);
-
-    // Check ownership
-    if (paper.addedBy !== userId) {
-      throw new ForbiddenException('You can only edit your own papers');
-    }
+    // findOne now checks ownership internally
+    const paper = await this.findOne(id, userId);
 
     const { tagIds, ...paperData } = updatePaperDto;
 
@@ -791,22 +1031,14 @@ export class PapersService {
         .addAndRemove(tagIds, paper.tags.map(t => t.id));
     }
 
-    return await this.findOne(id);
+    return await this.findOne(id, userId);
   }
 
   async remove(id: number, userId: number): Promise<void> {
-    const paper = await this.findOne(id);
-
-    if (paper.addedBy !== userId) {
-      throw new ForbiddenException('You can only delete your own papers');
-    }
+    // findOne now checks ownership internally
+    const paper = await this.findOne(id, userId);
 
     // Remove from user library first
-    try {
-      await this.libraryService.removeFromLibraryByPaperId(userId, id);
-    } catch (error) {
-      // If not in library, that's fine
-    }
 
     // Remove all citations (both citing and cited)
     await this.paperCitationsRepository.delete({ citingPaperId: id });
@@ -855,6 +1087,40 @@ export class PapersService {
 
     if (dto.status !== undefined) paper.status = dto.status;
     if (dto.favorite !== undefined) paper.favorite = dto.favorite;
+
+    return await this.papersRepository.save(paper);
+  }
+
+  async convertReferenceToResearch(id: number, userId: number): Promise<Paper> {
+    const paper = await this.papersRepository.findOne({ 
+      where: { id },
+      relations: ['tags']
+    });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    if (paper.addedBy !== userId) {
+      throw new ForbiddenException('You are not the owner of this paper');
+    }
+
+    if (!paper.isReference) {
+      throw new ConflictException('This paper is already a research paper');
+    }
+
+    // Convert to research paper
+    paper.isReference = false;
+
+    // Auto-add to default library
+    try {
+      const defaultLibrary = await this.librariesService.createDefaultLibrary(userId);
+      await this.librariesService.addPaperToLibrary(defaultLibrary.id, paper.id, userId);
+      this.logger.log(`Paper ${paper.id} automatically added to default library ${defaultLibrary.id}`);
+    } catch (error) {
+      this.logger.warn(`Failed to add paper ${paper.id} to default library: ${error.message}`);
+      // Don't throw error, just log it
+    }
 
     return await this.papersRepository.save(paper);
   }
@@ -943,7 +1209,7 @@ export class PapersService {
   private async autoDownloadArxivPdf(paperId: number, arxivUrl: string, userId: number): Promise<void> {
     try {
       this.logger.log(`🚀 Starting auto-download ArXiv PDF for paper ${paperId}`);
-      
+
       // Extract ArXiv ID from URL
       const arxivId = this.paperMetadataService.extractArxivId(arxivUrl);
       if (!arxivId) {
@@ -952,25 +1218,25 @@ export class PapersService {
       }
 
       this.logger.log(`📥 Downloading ArXiv PDF: ${arxivId}`);
-      
+
       // Download PDF buffer
       const pdfBuffer = await this.paperMetadataService.downloadArxivPdf(arxivId);
-      
+
       // Save to temp file
       const uploadsDir = path.join(process.cwd(), 'uploads');
       if (!fs.existsSync(uploadsDir)) {
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
-      
+
       const tempFilename = `arxiv-${arxivId}-${Date.now()}.pdf`;
       const tempFilePath = path.join(uploadsDir, tempFilename);
       fs.writeFileSync(tempFilePath, pdfBuffer);
-      
+
       this.logger.log(`💾 Saved temp file: ${tempFilePath}`);
-      
+
       // Get file stats
       const fileStats = fs.statSync(tempFilePath);
-      
+
       // Create file object compatible with Multer
       const fileObject: Express.Multer.File = {
         fieldname: 'file',
@@ -984,10 +1250,10 @@ export class PapersService {
         buffer: pdfBuffer,
         stream: null as any,
       };
-      
+
       // Upload to PDF service
       await this.pdfService.uploadPdf(paperId, fileObject, userId);
-      
+
       this.logger.log(`✅ Auto-downloaded and processed ArXiv PDF for paper ${paperId}`);
     } catch (error) {
       this.logger.error(`❌ Auto-download failed for paper ${paperId}: ${error.message}`);
@@ -1094,7 +1360,7 @@ export class PapersService {
       // 🔥 Recursive: Fetch references of this reference (if depth < maxDepth)
       if (depth < maxDepth) {
         this.logger.log(`🔄 [Depth ${depth}] Fetching references of reference paper ${refPaper.id} (next depth: ${depth + 1})`);
-        
+
         // Fetch references using Semantic Scholar or CrossRef
         let references: any[] = [];
         if (refPaper.doi) {
@@ -1104,7 +1370,7 @@ export class PapersService {
             this.logger.warn(`Could not fetch references by DOI: ${error.message}`);
           }
         }
-        
+
         // If no DOI or failed, try metadata search
         if ((!references || references.length === 0) && refPaper.title) {
           try {
@@ -1113,7 +1379,7 @@ export class PapersService {
               refPaper.authors,
               refPaper.publicationYear,
             );
-            
+
             if (searchResult) {
               references = await this.paperMetadataService.getReferencesByPaperId(searchResult.paperId);
               this.logger.log(`   ✅ Found ${references.length} references via metadata search`);
@@ -1125,23 +1391,18 @@ export class PapersService {
 
         if (references && references.length > 0) {
           this.logger.log(`📚 [Depth ${depth}] Found ${references.length} references, enriching with metadata...`);
-          
+
           // 🔥 ENRICH REFERENCES: Add abstracts and additional metadata
-          try {
-            this.logger.log(`🔄 [Depth ${depth}] Calling enrichReferences for ${references.length} references...`);
-            references = await this.paperMetadataService.enrichReferences(references);
-            const enrichedCount = references.filter(r => r.enriched).length;
-            this.logger.log(`✅ [Depth ${depth}] Enriched ${enrichedCount}/${references.length} references with abstracts`);
-          } catch (enrichError) {
-            this.logger.error(`❌ [Depth ${depth}] Enrichment failed: ${enrichError.message}`);
-            this.logger.error(enrichError.stack);
-            this.logger.warn(`⚠️ [Depth ${depth}] Proceeding with basic references due to enrichment failure`);
-          }
-          
-          // Process references asynchronously
-          this.processReferencesRecursive(refPaper, references, userId, depth + 1, maxDepth).catch(err => {
-            this.logger.error(`Failed to process recursive references at depth ${depth + 1}: ${err.message}`);
-          });
+          // try {
+          //   this.logger.log(`🔄 [Depth ${depth}] Calling enrichReferences for ${references.length} references...`);
+          //   references = await this.paperMetadataService.enrichReferences(references);
+          //   const enrichedCount = references.filter(r => r.enriched).length;
+          //   this.logger.log(`✅ [Depth ${depth}] Enriched ${enrichedCount}/${references.length} references with abstracts`);
+          // } catch (enrichError) {
+          //   this.logger.error(`❌ [Depth ${depth}] Enrichment failed: ${enrichError.message}`);
+          //   this.logger.error(enrichError.stack);
+          //   this.logger.warn(`⚠️ [Depth ${depth}] Proceeding with basic references due to enrichment failure`);
+          // }
         } else {
           this.logger.warn(`   ⚠️ No references found for paper ${refPaper.id} at depth ${depth}`);
         }
@@ -1166,7 +1427,7 @@ export class PapersService {
     // Calculate priority scores (same logic as original)
     const referencesWithScore = references.map(ref => {
       let score = 0;
-      
+
       if ((!ref.title || ref.title.trim() === '') && (!ref.doi || ref.doi.trim() === '')) {
         return { ...ref, priorityScore: 0 };
       }
@@ -1213,11 +1474,11 @@ export class PapersService {
     // Process each reference
     let successCount = 0;
     let errorCount = 0;
-    
+
     for (const ref of topRefs) {
       try {
         this.logger.log(`   📖 Processing ref: "${ref.title?.substring(0, 60)}..."`);
-        
+
         // Use AI-extracted data first, citation parser only as fallback
         let parsed = {
           title: ref.title,
@@ -1251,12 +1512,29 @@ export class PapersService {
           this.logger.log(`      ✓ Using AI-extracted data (authors: ${ref.authors?.substring(0, 30)}, year: ${ref.year})`);
         }
 
-        // Create or find reference paper
+        // Create or find reference paper (check both DOI and URL)
         const cleanDoi = parsed.doi || '';
+        const cleanUrl = ref.url || '';
         let refPaper: Paper | null = null;
-        
+
+        // Check by DOI first
         if (cleanDoi) {
-          refPaper = await this.papersRepository.findOne({ where: { doi: cleanDoi } });
+          refPaper = await this.papersRepository.findOne({
+            where: {
+              doi: cleanDoi,
+              addedBy: userId,
+            }
+          });
+        }
+
+        // If not found by DOI, check by URL
+        if (!refPaper && cleanUrl) {
+          refPaper = await this.papersRepository.findOne({
+            where: {
+              url: cleanUrl,
+              addedBy: userId,
+            }
+          });
         }
 
         if (!refPaper) {
@@ -1265,13 +1543,14 @@ export class PapersService {
             authors: parsed.authors,
             publicationYear: parsed.year,
             doi: cleanDoi,
+            url: cleanUrl,
             isReference: true,
             addedBy: userId,
           });
           await this.papersRepository.save(refPaper);
           this.logger.log(`      ✓ Created paper ID: ${refPaper.id} (authors: ${parsed.authors?.substring(0, 30)}, year: ${parsed.year})`);
         } else {
-          this.logger.log(`      ✓ Found existing paper ID: ${refPaper.id}`);
+          this.logger.log(`      ✓ Found existing paper ID: ${refPaper.id} (isReference: ${refPaper.isReference})`);
         }
 
         // Create citation relationship
@@ -1283,22 +1562,31 @@ export class PapersService {
         });
 
         if (!existingCitation) {
-          const citation = await this.paperCitationsRepository.save({
-            citingPaperId: parentPaper.id,
-            citedPaperId: refPaper.id,
-            createdBy: userId,
-            citationContext: ref.citationContext || null,
-            relevanceScore: ref.priorityScore ? ref.priorityScore / 100 : null,
-            isInfluential: ref.isInfluential || false,
-            citationDepth: depth,
-            parsedAuthors: parsed.authors,
-            parsedTitle: parsed.title,
-            parsedYear: parsed.year,
-            parsingConfidence: parsed.confidence,
-            rawCitation: parsed.rawCitation,
-          });
-          this.logger.log(`      ✓ Created citation ID: ${citation.id}`);
-          successCount++;
+          try {
+            const citation = await this.paperCitationsRepository.save({
+              citingPaperId: parentPaper.id,
+              citedPaperId: refPaper.id,
+              createdBy: userId,
+              citationContext: ref.citationContext || null,
+              relevanceScore: ref.priorityScore ? ref.priorityScore / 100 : null,
+              isInfluential: ref.isInfluential || false,
+              citationDepth: depth,
+              parsedAuthors: parsed.authors,
+              parsedTitle: parsed.title,
+              parsedYear: parsed.year,
+              parsingConfidence: parsed.confidence,
+              rawCitation: parsed.rawCitation,
+            });
+            this.logger.log(`      ✓ Created citation ID: ${citation.id}`);
+            successCount++;
+          } catch (saveError) {
+            // Handle duplicate key error gracefully (race condition)
+            if (saveError.code === 'ER_DUP_ENTRY' || saveError.message?.includes('Duplicate entry')) {
+              this.logger.log(`      • Citation already exists (race condition handled)`);
+            } else {
+              throw saveError; // Re-throw if it's a different error
+            }
+          }
         } else {
           this.logger.log(`      • Citation already exists ID: ${existingCitation.id}`);
         }
@@ -1306,12 +1594,12 @@ export class PapersService {
         // Auto-download and fetch nested references if high priority (score >= 50)
         if (ref.priorityScore >= 50 && parsed.confidence > 0.5) {
           this.logger.log(`🚀 [Depth ${depth}] Processing high-priority nested reference: ${parsed.title.substring(0, 40)}... (score: ${ref.priorityScore})`);
-          
+
           // Try to download PDF first
           this.autoDownloadReferencePdf(refPaper, userId, depth, maxDepth).catch(err => {
             this.logger.warn(`Nested auto-download failed: ${err.message}`);
           });
-          
+
           // But also try to fetch references immediately (don't wait for PDF)
           if (depth < maxDepth) {
             this.fetchAndProcessNestedReferences(refPaper, userId, depth, maxDepth).catch(err => {
@@ -1326,9 +1614,9 @@ export class PapersService {
         continue;
       }
     }
-    
+
     this.logger.log(`✅ [Depth ${depth}] Completed: ${successCount} citations created, ${errorCount} errors`);
-    
+
     // 🔥 PHASE 2: Apply graph analysis to select top 20 from all created citations
     if (depth === 0) {  // Only for root paper's direct references
       await this.rankReferencesWithGraphAnalysis(parentPaper.id, userId);
@@ -1343,23 +1631,23 @@ export class PapersService {
     try {
       this.logger.log(`\n🎯 ========== PHASE 2: GRAPH ANALYSIS RANKING ==========`);
       this.logger.log(`📊 Analyzing citation network for paper ${paperId}...`);
-      
+
       // Get all citations for this paper
       const citations = await this.paperCitationsRepository.find({
         where: { citingPaperId: paperId },
         relations: ['citedPaper'],
       });
-      
+
       if (citations.length === 0) {
         this.logger.warn(`No citations found for paper ${paperId}`);
         return;
       }
-      
+
       this.logger.log(`Found ${citations.length} citations to analyze`);
-      
+
       // Get citation network for graph analysis
       const network = await this.citationsService.getCitationNetwork(paperId, 2);
-      
+
       // Calculate advanced scores for each citation
       const citationsWithScores = await Promise.all(
         citations.map(async (citation) => {
@@ -1370,13 +1658,13 @@ export class PapersService {
               network,
               new Date().getFullYear()
             );
-            
+
             // 2. Network centrality (PageRank-like)
             const centrality = await this.citationMetricsService.calculateCentrality(
               citation.citedPaperId,
               network
             );
-            
+
             // 3. Co-citation strength (similarity to other papers)
             const coCitationResult = await this.citationMetricsService.calculateCoCitation(
               paperId,
@@ -1384,7 +1672,7 @@ export class PapersService {
               network
             );
             const coCitation = coCitationResult.strength || 0;
-            
+
             // 4. Impact potential (0-100 composite score)
             let impactScore = 0;
             try {
@@ -1393,14 +1681,14 @@ export class PapersService {
             } catch (err) {
               this.logger.warn(`Impact forecast failed for ${citation.citedPaperId}: ${err.message}`);
             }
-            
+
             // 5. Combined final score (weighted average)
-            const finalScore = 
+            const finalScore =
               totalScore * 0.40 +           // Advanced multi-factor: 40%
               centrality.inDegree * 0.01 * 0.25 +  // Network centrality: 25% (normalized)
               coCitation * 0.20 +           // Co-citation: 20%
               impactScore * 0.01 * 0.15;    // Impact potential: 15%
-            
+
             this.logger.log(
               `  📄 Paper ${citation.citedPaperId}: ` +
               `Score=${finalScore.toFixed(3)} ` +
@@ -1409,7 +1697,7 @@ export class PapersService {
               `coCite=${coCitation.toFixed(2)}, ` +
               `impact=${impactScore.toFixed(0)})`
             );
-            
+
             return {
               citation,
               finalScore,
@@ -1430,14 +1718,14 @@ export class PapersService {
           }
         })
       );
-      
+
       // Sort by final score and keep top 20
       const sortedCitations = citationsWithScores
         .sort((a, b) => b.finalScore - a.finalScore);
-      
+
       const top20 = sortedCitations.slice(0, 20);
       const toRemove = sortedCitations.slice(20);
-      
+
       this.logger.log(`\n📊 RANKING RESULTS:`);
       this.logger.log(`  ✅ Top 20 references (keeping):`);
       top20.forEach((item, idx) => {
@@ -1447,14 +1735,14 @@ export class PapersService {
           `"${item.citation.citedPaper?.title?.substring(0, 50)}..."`
         );
       });
-      
+
       if (toRemove.length > 0) {
         this.logger.log(`\n  ❌ Removing ${toRemove.length} lower-ranked citations`);
         const idsToRemove = toRemove.map(item => item.citation.id);
         await this.paperCitationsRepository.delete(idsToRemove);
         this.logger.log(`  ✓ Deleted ${toRemove.length} citations`);
       }
-      
+
       // Update relevance scores for top 20
       this.logger.log(`\n  📝 Updating relevance scores for top 20...`);
       for (const item of top20) {
@@ -1462,9 +1750,9 @@ export class PapersService {
           relevanceScore: item.finalScore,
         });
       }
-      
+
       this.logger.log(`\n✅ ========== GRAPH ANALYSIS COMPLETE ==========\n`);
-      
+
     } catch (error) {
       this.logger.error(`❌ Graph analysis failed: ${error.message}`);
       this.logger.error(error.stack);
@@ -1482,9 +1770,9 @@ export class PapersService {
   ): Promise<void> {
     try {
       this.logger.log(`🔄 [Depth ${depth}] Fetching references for paper ${refPaper.id}: ${refPaper.title.substring(0, 40)}...`);
-      
+
       let references: any[] = [];
-      
+
       // Method 1: Try DOI first
       if (refPaper.doi) {
         try {
@@ -1494,7 +1782,7 @@ export class PapersService {
           this.logger.warn(`   ⚠️ Could not fetch by DOI: ${error.message}`);
         }
       }
-      
+
       // Method 2: Try metadata search if no DOI or failed
       if ((!references || references.length === 0) && refPaper.title) {
         try {
@@ -1503,7 +1791,7 @@ export class PapersService {
             refPaper.authors,
             refPaper.publicationYear,
           );
-          
+
           if (searchResult) {
             // Update DOI if found
             if (searchResult.doi && !refPaper.doi) {
@@ -1511,7 +1799,7 @@ export class PapersService {
               await this.papersRepository.save(refPaper);
               this.logger.log(`   📝 Updated DOI: ${searchResult.doi}`);
             }
-            
+
             references = await this.paperMetadataService.getReferencesByPaperId(searchResult.paperId);
             this.logger.log(`   ✅ Found ${references.length} references via metadata search`);
           }
@@ -1522,7 +1810,7 @@ export class PapersService {
 
       if (references && references.length > 0) {
         this.logger.log(`📚 [Depth ${depth}] Found ${references.length} references, enriching with metadata...`);
-        
+
         // 🔥 ENRICH REFERENCES: Add abstracts and additional metadata
         try {
           references = await this.paperMetadataService.enrichReferences(references);
@@ -1531,7 +1819,7 @@ export class PapersService {
         } catch (enrichError) {
           this.logger.warn(`⚠️ [Depth ${depth}] Enrichment failed, proceeding with basic references: ${enrichError.message}`);
         }
-        
+
         this.logger.log(`📚 [Depth ${depth}] Processing ${references.length} references at depth ${depth + 1}`);
         await this.processReferencesRecursive(refPaper, references, userId, depth + 1, maxDepth);
       } else {
@@ -1549,14 +1837,14 @@ export class PapersService {
     try {
       const email = 'your-email@example.com'; // TODO: Move to config
       const url = `https://api.unpaywall.org/v2/${doi}?email=${email}`;
-      
+
       const response = await fetch(url);
       if (!response.ok) {
         return null;
       }
 
       const data = await response.json();
-      
+
       // Check for best open access location
       if (data.best_oa_location && data.best_oa_location.url_for_pdf) {
         this.logger.log(`✅ Found open access PDF via Unpaywall`);
@@ -1587,4 +1875,124 @@ export class PapersService {
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
   }
+
+  async toggleFavorite(id: number, favorite: boolean, userId: number): Promise<Paper> {
+    // findOne now checks ownership internally
+    const paper = await this.findOne(id, userId);
+
+    paper.favorite = favorite;
+    return await this.papersRepository.save(paper);
+  }
+
+  // get statistics of paper: status and favorite
+  async getPaperStatusStatistics(userId: number): Promise<{
+    byStatus: Record<string, number>;
+    favorites: number;
+    total: number;
+  }> {
+    const baseQuery = this.papersRepository.createQueryBuilder('paper')
+      .where('paper.addedBy = :userId', { userId })
+      .andWhere('paper.isReference = :isReference', { isReference: false });
+
+    const total = await baseQuery.getCount();
+
+    const byStatus: Record<string, number> = {};
+
+    for (const status of ['to_read', 'reading', 'completed']) {
+      byStatus[status] = await baseQuery
+        .clone()
+        .andWhere('paper.status = :status', { status })
+        .getCount();
+    }
+
+    const favorites = await baseQuery
+      .clone()
+      .andWhere('paper.favorite = true')
+      .getCount();
+    return {
+      byStatus,
+      favorites,
+      total,
+    };
+  }
+
+  // Get library (filtered papers)
+  async getLibrary(userId: number, filters?: {
+    status?: string;
+    favorite?: boolean;
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  }): Promise<{ items: any[]; total: number }> {
+    const { status, favorite, page = 1, pageSize = 10, search } = filters || {};
+
+    const queryBuilder = this.papersRepository
+      .createQueryBuilder('paper')
+      .leftJoinAndSelect('paper.tags', 'tags')
+      .where('paper.addedBy = :userId', { userId })
+      .andWhere('paper.isReference = :isReference', { isReference: false });
+
+    if (status) {
+      queryBuilder.andWhere('paper.status = :status', { status });
+    }
+
+    if (favorite !== undefined) {
+      queryBuilder.andWhere('paper.favorite = :favorite', { favorite });
+    }
+
+    if (search) {
+      queryBuilder.andWhere(
+        '(paper.title LIKE :search OR paper.authors LIKE :search OR paper.abstract LIKE :search)',
+        { search: `%${search}%` }
+      );
+    }
+
+    const total = await queryBuilder.getCount();
+
+    const papers = await queryBuilder
+      .orderBy('paper.createdAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize)
+      .getMany();
+
+    // Transform to match LibraryItem format
+    const items = papers.map(paper => ({
+      id: paper.id,
+      paperId: paper.id,
+      userId: paper.addedBy,
+      addedAt: paper.createdAt,
+      paper: paper,
+    }));
+
+    return { items, total };
+  }
+
+  // Update paper status
+  async updatePaperStatus(paperId: number, userId: number, status: string): Promise<Paper> {
+    const paper = await this.papersRepository.findOne({
+      where: { id: paperId, addedBy: userId },
+      relations: ['tags'],
+    });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    paper.status = status as any;
+    return await this.papersRepository.save(paper);
+  }
+
+  // Remove paper (soft delete by setting isReference or hard delete)
+  async removePaper(paperId: number, userId: number): Promise<void> {
+    const paper = await this.papersRepository.findOne({
+      where: { id: paperId, addedBy: userId },
+    });
+
+    if (!paper) {
+      throw new NotFoundException('Paper not found');
+    }
+
+    await this.papersRepository.remove(paper);
+  }
+
 }

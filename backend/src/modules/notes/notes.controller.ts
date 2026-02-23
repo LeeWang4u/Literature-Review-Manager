@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   ParseIntPipe,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { NotesService } from './notes.service';
@@ -38,16 +39,16 @@ export class NotesController {
   @Get('paper/:paperId')
   @ApiOperation({ summary: 'Get all notes for a specific paper' })
   @ApiResponse({ status: 200, description: 'Return all notes for the paper' })
-  findByPaper(@Param('paperId', ParseIntPipe) paperId: number) {
-    return this.notesService.findByPaper(paperId);
+  findByPaper(@Param('paperId', ParseIntPipe) paperId: number, @Req() req) {
+    return this.notesService.findByPaper(paperId, req.user.id);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a note by ID' })
   @ApiResponse({ status: 200, description: 'Return the note' })
   @ApiResponse({ status: 404, description: 'Note not found' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.notesService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @Req() req) {
+    return this.notesService.findOne(id, req.user.id);
   }
 
   @Put(':id')
@@ -57,15 +58,16 @@ export class NotesController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateNoteDto: UpdateNoteDto,
+    @Req() req,
   ) {
-    return this.notesService.update(id, updateNoteDto);
+    return this.notesService.update(id, updateNoteDto, req.user.id);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a note' })
   @ApiResponse({ status: 200, description: 'Note deleted successfully' })
   @ApiResponse({ status: 404, description: 'Note not found' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.notesService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @Req() req) {
+    return this.notesService.remove(id, req.user.id);
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,8 +13,13 @@ import {
   Chip,
   TextField,
   InputAdornment,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
 } from '@mui/material';
-import { Add, Search, ArrowBack } from '@mui/icons-material';
+import { Add, Search, ArrowBack, Article, Close, Edit } from '@mui/icons-material';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { NoteCard } from '@/components/notes/NoteCard';
 import { NoteDialog, NoteFormData} from '@/components/notes/NoteDialog';
@@ -29,21 +34,46 @@ const NotesPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [viewingNote, setViewingNote] = useState<Note | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch paper details
-  const { data: paper } = useQuery({
+  const { data: paper, error: paperError } = useQuery({
     queryKey: ['paper', paperId],
     queryFn: () => paperService.getById(Number(paperId)),
     enabled: !!paperId,
+    retry: false,
   });
+
+  // Handle paper errors with redirect
+  useEffect(() => {
+    if (paperError) {
+      const err = paperError as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        // toast.error('Paper not found or you do not have access');
+        navigate('/papers');
+      }
+    }
+  }, [paperError, navigate]);
 
   // Fetch notes for the paper
   const { data: notes = [], isLoading, error } = useQuery({
     queryKey: ['notes', paperId],
     queryFn: () => noteService.getByPaper(Number(paperId)),
     enabled: !!paperId,
+    retry: false,
   });
+
+  // Handle notes errors with redirect
+  useEffect(() => {
+    if (error) {
+      const err = error as any;
+      if (err?.response?.status === 404 || err?.response?.status === 403) {
+        toast.error('Notes not accessible - you do not have access to this paper');
+        navigate('/papers');
+      }
+    }
+  }, [error, navigate]);
 
   // Create note mutation
   const createMutation = useMutation({
@@ -117,13 +147,20 @@ const NotesPage: React.FC = () => {
     deleteMutation.mutate(id);
   };
 
+  const handleViewNote = (note: Note) => {
+    setViewingNote(note);
+  };
+
+  const handleCloseViewDialog = () => {
+    setViewingNote(null);
+  };
+
   // Filter notes by search query
   const filteredNotes = notes.filter((note) => {
     const query = searchQuery.toLowerCase();
     return (
     (note.title?.toLowerCase() || '').includes(query) ||
-    (note.content?.toLowerCase() || '').includes(query) ||
-    (note.highlightedText?.toLowerCase() || '').includes(query)
+    (note.content?.toLowerCase() || '').includes(query)
     );
   });
  
@@ -252,11 +289,104 @@ const NotesPage: React.FC = () => {
                   note={note}
                   onEdit={handleEditNote}
                   onDelete={handleDeleteNote}
+                  onView={handleViewNote}
                 />
               </Grid>
             ))}
           </Grid>
         )}
+
+        {/* View Note Detail Dialog */}
+        <Dialog
+          open={!!viewingNote}
+          onClose={handleCloseViewDialog}
+          maxWidth="md"
+          fullWidth
+          PaperProps={{
+            sx: { minHeight: '400px' },
+          }}
+        >
+          <DialogTitle>
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6" display="flex" alignItems="center" gap={1}>
+                <Article color="primary" />
+                {viewingNote?.title}
+              </Typography>
+              <IconButton onClick={handleCloseViewDialog}>
+                <Close />
+              </IconButton>
+            </Box>
+          </DialogTitle>
+          <DialogContent dividers>
+            <Box display="flex" flexDirection="column" gap={3}>
+              {/* Content */}
+              <Box>
+                <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                  Content
+                </Typography>
+                <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {viewingNote?.content}
+                </Typography>
+              </Box>
+
+              {/* Page Number */}
+              {viewingNote?.pageNumber && (
+                <Box>
+                  <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                    Page Number
+                  </Typography>
+                  <Chip 
+                    label={`Page ${viewingNote.pageNumber}`}
+                    color="primary"
+                    variant="outlined"
+                  />
+                </Box>
+              )}
+
+              {/* Metadata */}
+              <Box>
+                <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                  Metadata
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block">
+                  Created: {viewingNote && new Date(viewingNote.createdAt).toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </Typography>
+                {viewingNote && viewingNote.updatedAt !== viewingNote.createdAt && (
+                  <Typography variant="caption" color="textSecondary" display="block">
+                    Updated: {new Date(viewingNote.updatedAt).toLocaleString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </Typography>
+                )}
+              </Box>
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCloseViewDialog}>Close</Button>
+            <Button 
+              variant="outlined" 
+              startIcon={<Edit />}
+              onClick={() => {
+                if (viewingNote) {
+                  handleEditNote(viewingNote);
+                  handleCloseViewDialog();
+                }
+              }}
+            >
+              Edit
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Note Dialog */}
         <NoteDialog

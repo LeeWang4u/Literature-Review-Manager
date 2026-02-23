@@ -37,16 +37,22 @@ export class TagsService {
     return tags;
   }
 
-  async findOne(id: number): Promise<Tag> {
+  async findOne(id: number, userId?: number): Promise<Tag> {
     const tag = await this.tagsRepository.findOne({ where: { id } });
     if (!tag) {
       throw new NotFoundException(`Tag with ID ${id} not found`);
     }
+    
+    // Check ownership
+    if (userId && tag.owner !== userId) {
+      throw new NotFoundException(`Tag with ID ${id} not found`);
+    }
+    
     return tag;
   }
 
-  async update(id: number, updateTagDto: UpdateTagDto): Promise<Tag> {
-    const tag = await this.findOne(id);
+  async update(id: number, updateTagDto: UpdateTagDto, userId?: number): Promise<Tag> {
+    const tag = await this.findOne(id, userId);
     
     // Check if new name conflicts with existing tag
     if (updateTagDto.name && updateTagDto.name !== tag.name) {
@@ -63,8 +69,8 @@ export class TagsService {
     return await this.tagsRepository.save(tag);
   }
 
-  async remove(id: number): Promise<void> {
-    const tag = await this.findOne(id);
+  async remove(id: number, userId?: number): Promise<void> {
+    const tag = await this.findOne(id, userId);
     await this.tagsRepository.remove(tag);
   }
 }

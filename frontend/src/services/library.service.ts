@@ -2,100 +2,123 @@
 import axiosInstance from './api';
 import {
   LibraryItem,
-  AddToLibraryData,
-  // LibraryStatistics,
-  
+  Library,
+  CreateLibraryData,
+  UpdateLibraryData,
 } from '@/types';
 
+export type LibraryStatus = 'to_read' | 'reading' | 'completed';
 
 export interface StatusDefinition {
   key: string;
   label: string;
   color: 'default' | 'primary' | 'success' | 'warning';
 }
-
 export interface LibraryStatistics {
   total: number;
-  byStatus: {
-    [key: string]: number;
-  };
   favorites: number;
-  reading: number;
-  completed: number;
+  byStatus: Record<LibraryStatus, number>;
 }
 
 export const libraryService = {
-  // Add paper to library
-  addToLibrary: async (data: AddToLibraryData): Promise<LibraryItem> => {
-    const response = await axiosInstance.post<LibraryItem>('/library/add', data);
+
+  getLibrary: async (filters?: {
+    status?: string;
+    favorite?: boolean;
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  }): Promise<{ items: LibraryItem[]; total: number }> => {
+    const response = await axiosInstance.get<{ items: LibraryItem[]; total: number }>(
+      '/papers/library/filter',
+      { params: filters }
+    );
     return response.data;
   },
 
-
-
-  // getLibrary: async (filters?: { status?: string; 
-  //   favorite?: boolean; 
-  //   page?: number; 
-  //   pageSize?: number,
-  //   search?: string
-  //  }): Promise<LibraryItem[]> => {
-  //   const response = await axiosInstance.get<LibraryItem[]>('/library/filter', { params: filters });
-  //   return response.data;
-  // },
-
-  getLibrary: async (filters?: { status?: string; 
-    favorite?: boolean; 
-    page?: number; 
-    pageSize?: number,
-    search?: string
-   }): Promise<{ items: LibraryItem[]; total: number }> => {
-    const response = await axiosInstance.get<{ items: LibraryItem[]; total: number }>('/library/filter', { params: filters });
-    return response.data;
-  },
-
-  countByStatus: async (): Promise<Record<'to_read' | 'reading' | 'completed', number>> => {
-    const response = await axiosInstance.get<Record<'to_read' | 'reading' | 'completed', number>>('/library/count-by-status');
-    return response.data;
-  },
-
-  getInLibrary: async (paperId: number): Promise<boolean> => {
-    const response = await axiosInstance.get<{ inLibrary: boolean }>(`/library/in-library/${paperId}`);
-    return response.data.inLibrary;
-  },
-
-  // Get library statistics
+  // Get library statistics (now using papers endpoint)
   getStatistics: async (): Promise<LibraryStatistics> => {
-    const response = await axiosInstance.get<LibraryStatistics>('/library/statistics');
+    const response = await axiosInstance.get<LibraryStatistics>('/papers/library/statistics');
     return response.data;
   },
 
-  // Update reading status
+  // Update reading status (now using papers endpoint)
   updateStatus: async (id: number, status: string): Promise<LibraryItem> => {
-    const response = await axiosInstance.put<LibraryItem>(`/library/${id}/status`, { status });
+    const response = await axiosInstance.put<LibraryItem>(
+      `/papers/library/${id}/status`, 
+      { status }
+    );
     return response.data;
   },
 
-  // Rate paper
-  ratePaper: async (id: number, rating: number): Promise<LibraryItem> => {
-    const response = await axiosInstance.put<LibraryItem>(`/library/${id}/rating`, { rating });
+  // ============= NEW LIBRARY MANAGEMENT APIs =============
+
+  // Get all libraries for the current user
+  getAllLibraries: async (): Promise<Library[]> => {
+    const response = await axiosInstance.get<Library[]>('/libraries');
     return response.data;
   },
 
-  // Remove from library
-  removeFromLibrary: async (id: number): Promise<void> => {
-    await axiosInstance.delete(`/library/${id}`);
-  },
-
-  getStatuses: async (): Promise<StatusDefinition[]> => {
-    const response = await axiosInstance.get<StatusDefinition[]>('/library/statuses');
+  // Ensure default library exists
+  ensureDefaultLibrary: async (): Promise<Library> => {
+    const response = await axiosInstance.post<Library>('/libraries/ensure-default');
     return response.data;
   },
 
+  // Get a single library by ID
+  getLibraryById: async (id: number): Promise<Library> => {
+    const response = await axiosInstance.get<Library>(`/libraries/${id}`);
+    return response.data;
+  },
+
+  // Create a new library
+  createLibrary: async (data: CreateLibraryData): Promise<Library> => {
+    const response = await axiosInstance.post<Library>('/libraries', data);
+    return response.data;
+  },
+
+  // Update a library
+  updateLibrary: async (id: number, data: UpdateLibraryData): Promise<Library> => {
+    const response = await axiosInstance.put<Library>(`/libraries/${id}`, data);
+    return response.data;
+  },
+
+  // Delete a library
+  deleteLibrary: async (id: number): Promise<void> => {
+    await axiosInstance.delete(`/libraries/${id}`);
+  },
+
+  // Add a paper to a library
+  addPaperToLibrary: async (libraryId: number, paperId: number): Promise<void> => {
+    await axiosInstance.post(`/libraries/${libraryId}/papers`, { paperId });
+  },
+
+  // Remove a paper from a library
+  removePaperFromLibrary: async (libraryId: number, paperId: number): Promise<void> => {
+    await axiosInstance.delete(`/libraries/${libraryId}/papers/${paperId}`);
+  },
+
+  // Get papers in a library
+  getPapersInLibrary: async (libraryId: number): Promise<number[]> => {
+    const response = await axiosInstance.get<number[]>(`/libraries/${libraryId}/papers`);
+    return response.data;
+  },
+
+  // Get statistics for a specific library
+  getLibraryStatistics: async (libraryId: number): Promise<LibraryStatistics> => {
+    const response = await axiosInstance.get<LibraryStatistics>(`/libraries/${libraryId}/statistics`);
+    return response.data;
+  },
+
+  // Get libraries that contain a specific paper
+  getLibrariesForPaper: async (paperId: number): Promise<Library[]> => {
+    const response = await axiosInstance.get<Library[]>(`/papers/${paperId}/libraries`);
+    return response.data;
+  },
+
+  // Toggle favorite (now using papers endpoint)
   toggleFavorite: async (id: number, favorite: boolean): Promise<void> => {
-    await axiosInstance.patch(`/library/${id}/favorite`, { favorite });
-
+    await axiosInstance.patch(`/papers/library/${id}/favorite`, { favorite });
   },
-
-
-
 };
+

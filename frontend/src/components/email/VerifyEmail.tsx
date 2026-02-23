@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { authService } from "@/services/auth.service";
 

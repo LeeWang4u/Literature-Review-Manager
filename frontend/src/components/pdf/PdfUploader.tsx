@@ -53,8 +53,19 @@ export const PdfUploader: React.FC<PdfUploaderProps> = ({ paperId, onUploadCompl
 
       return result;
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['pdfs', paperId] });
+    onSuccess: async (data, variables) => {
+      // Get current PDFs and add the new one immediately (optimistic update)
+      const currentPdfs = queryClient.getQueryData(['pdfs', String(paperId)]);
+      if (currentPdfs && data) {
+        queryClient.setQueryData(['pdfs', String(paperId)], [...(currentPdfs as any[]), data]);
+      }
+      
+      // Then refetch to ensure server state is correct
+      await queryClient.refetchQueries({ 
+        queryKey: ['pdfs', String(paperId)],
+        type: 'active'
+      });
+      
       toast.success('PDF uploaded successfully!');
       
       // Remove from uploading list after 2 seconds

@@ -27,13 +27,18 @@ export class PdfService {
     file: Express.Multer.File,
     userId?: number,
   ): Promise<PdfFile> {
-    // Verify paper exists
+    // Verify paper exists and user owns it
     const paper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!paper) {
       throw new NotFoundException('Paper not found');
+    }
+
+    // Check ownership
+    if (userId && paper.addedBy !== userId) {
+      throw new NotFoundException('Paper not found or you do not have access');
     }
 
     // Validate file type
@@ -58,7 +63,6 @@ export class PdfService {
       fileSize: file.size,
       mimeType: file.mimetype,
       version,
-      uploadedBy: userId,
     });
 
     const savedPdfFile = await this.pdfRepository.save(pdfFile);
@@ -77,14 +81,19 @@ export class PdfService {
     return savedPdfFile;
   }
 
-  async findByPaper(paperId: number): Promise<PdfFile[]> {
-    // Verify the paper exists
+  async findByPaper(paperId: number, userId?: number): Promise<PdfFile[]> {
+    // Verify the paper exists and user owns it
     const paper = await this.papersRepository.findOne({
       where: { id: paperId },
     });
 
     if (!paper) {
       throw new NotFoundException('Paper not found');
+    }
+
+    // Check ownership
+    if (userId && paper.addedBy !== userId) {
+      throw new NotFoundException('Paper not found or you do not have access');
     }
 
     // Return all PDFs for this paper
@@ -94,7 +103,7 @@ export class PdfService {
     });
   }
 
-  async findOne(id: number): Promise<PdfFile> {
+  async findOne(id: number, userId?: number): Promise<PdfFile> {
     const pdfFile = await this.pdfRepository.findOne({
       where: { id },
       relations: ['paper'],
@@ -104,11 +113,16 @@ export class PdfService {
       throw new NotFoundException('PDF file not found');
     }
 
+    // Check ownership
+    if (userId && pdfFile.paper.addedBy !== userId) {
+      throw new NotFoundException('PDF file not found or you do not have access');
+    }
+
     return pdfFile;
   }
 
-  async downloadPdf(id: number): Promise<{ file: Buffer; filename: string }> {
-    const pdfFile = await this.findOne(id);
+  async downloadPdf(id: number, userId?: number): Promise<{ file: Buffer; filename: string }> {
+    const pdfFile = await this.findOne(id, userId);
 
     if (!fs.existsSync(pdfFile.filePath)) {
       throw new NotFoundException('PDF file not found on disk');
@@ -122,8 +136,8 @@ export class PdfService {
     };
   }
 
-  async remove(id: number): Promise<void> {
-    const pdfFile = await this.findOne(id);
+  async remove(id: number, userId?: number): Promise<void> {
+    const pdfFile = await this.findOne(id, userId);
 
     // Delete file from disk
     if (fs.existsSync(pdfFile.filePath)) {

@@ -16,9 +16,10 @@ interface NoteCardProps {
   note: Note;
   onEdit: (note: Note) => void;
   onDelete: (id: number) => void;
+  onView?: (note: Note) => void;
 }
 
-export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit, onDelete }) => {
+export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit, onDelete, onView }) => {
   const formatDate = (dateString: string): string => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -54,7 +55,16 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit, onDelete }) =>
         },
       }}
     >
-      <CardContent sx={{ flexGrow: 1 }}>
+      <CardContent 
+        sx={{ 
+          flexGrow: 1,
+          cursor: onView ? 'pointer' : 'default',
+          '&:hover': onView ? {
+            bgcolor: 'action.hover',
+          } : {}
+        }}
+        onClick={() => onView?.(note)}
+      >
         {/* Title */}
         <Typography 
           variant="h6" 
@@ -82,27 +92,6 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit, onDelete }) =>
 
         {/* Metadata */}
         <Box display="flex" flexDirection="column" gap={1}>
-          {/* Highlighted Text */}
-          {note.highlightedText && (
-            <Box>
-              <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
-                Highlighted:
-              </Typography>
-              <Typography 
-                variant="body2" 
-                sx={{ 
-                  bgcolor: 'warning.light',
-                  p: 0.5,
-                  borderRadius: 1,
-                  fontStyle: 'italic',
-                  display: 'inline-block',
-                }}
-              >
-                "{truncateContent(note.highlightedText, 100)}"
-              </Typography>
-            </Box>
-          )}
-
           {/* Page Number */}
           {note.pageNumber && (
             <Chip 
