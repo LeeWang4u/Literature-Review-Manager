@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, Logger, Inject, forwardRef, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger, Inject, forwardRef, ConflictException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In } from 'typeorm';
 import { Paper } from './paper.entity';
@@ -19,9 +19,25 @@ import { LibrariesService } from '../libraries/libraries.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
+/**
+ * Interface for ScimagoJR journal ranking data
+ */
+interface JournalRanking {
+  rank: number;
+  title: string;
+  sjr: number;           // SJR score
+  quartile: string;      // Q1, Q2, Q3, Q4
+  hIndex: number;        // H-index
+  categories: string;    // Subject categories
+}
+
 @Injectable()
-export class PapersService {
+export class PapersService implements OnModuleInit {
   private readonly logger = new Logger(PapersService.name);
+
+  // 🔥 Cache for ScimagoJR journal rankings (loaded once at startup)
+  private journalRankingCache: Map<string, JournalRanking> = new Map();
+  private journalRankingLoaded = false;
 
   constructor(
     @InjectRepository(Paper)
@@ -43,6 +59,191 @@ export class PapersService {
     @Inject(forwardRef(() => PdfService))
     private pdfService: PdfService,
   ) { }
+
+  /**
+   * 🚀 Load ScimagoJR 2024 rankings on module initialization
+   */
+  async onModuleInit() {
+    await this.loadJournalRankings();
+  }
+
+  /**
+   * 📥 Parse and cache ScimagoJR CSV data
+   */
+  private async loadJournalRankings(): Promise<void> {
+    try {
+      const csvPath = path.join(__dirname, '../../../data/scimagojr_2024.csv');
+      
+      if (!fs.existsSync(csvPath)) {
+        this.logger.warn(`⚠️ ScimagoJR CSV not found at ${csvPath}, using fallback scoring`);
+        return;
+      }
+
+      this.logger.log(`📂 Loading ScimagoJR rankings from: ${csvPath}`);
+      const fileContent = fs.readFileSync(csvPath, 'utf-8');
+      const lines = fileContent.split('\n');
+      
+      let successCount = 0;
+      let errorCount = 0;
+
+      // Skip header (line 0): Rank;Sourceid;Title;Type;Issn;SJR;SJR Best Quartile;H index;...
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        try {
+          // Parse CSV (semicolon-separated)
+          const cols = line.split(';');
+          if (cols.length < 27) continue;
+
+          const rank = parseInt(cols[0]);
+          const title = cols[2].replace(/"/g, '').trim(); // Remove quotes
+          const sjrRaw = cols[5].replace(',', '.'); // Handle European decimal format (1,234 -> 1.234)
+          const sjr = parseFloat(sjrRaw);
+          const quartile = cols[6].trim();
+          const hIndex = parseInt(cols[7]);
+          const categories = cols[26] || '';
+
+          if (!title || isNaN(rank) || isNaN(sjr)) continue;
+
+          // Normalize title for better matching
+          const normalizedTitle = this.normalizeJournalName(title);
+
+          this.journalRankingCache.set(normalizedTitle, {
+            rank,
+            title,
+            sjr,
+            quartile,
+            hIndex,
+            categories,
+          });
+
+          // Add common abbreviations/variants for better matching
+          this.addJournalVariants(normalizedTitle, { rank, title, sjr, quartile, hIndex, categories });
+          
+          successCount++;
+        } catch (parseError) {
+          errorCount++;
+          if (errorCount <= 5) { // Only log first 5 errors
+            this.logger.debug(`Parse error at line ${i}: ${parseError.message}`);
+          }
+        }
+      }
+
+      this.journalRankingLoaded = true;
+      this.logger.log(`✅ Loaded ${successCount} journal rankings from ScimagoJR 2024`);
+      
+      if (errorCount > 0) {
+        this.logger.warn(`⚠️ ${errorCount} parsing errors (rows skipped)`);
+      }
+
+      // Log top 5 journals for verification
+      const topJournals = Array.from(this.journalRankingCache.entries())
+        .sort((a, b) => b[1].sjr - a[1].sjr) // Sort by SJR descending
+        .slice(0, 5);
+      
+      this.logger.log(`📊 Top 5 journals by SJR:`);
+      topJournals.forEach(([key, data]) => {
+        this.logger.log(`   ${data.rank}. ${data.title} (SJR: ${data.sjr.toFixed(3)}, ${data.quartile})`);
+      });
+
+    } catch (error) {
+      this.logger.error(`❌ Failed to load ScimagoJR rankings: ${error.message}`);
+      this.logger.error(error.stack);
+    }
+  }
+
+  /**
+   * 🔤 Normalize journal name for consistent matching
+   */
+  private normalizeJournalName(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, '') // Keep alphanumeric, spaces, hyphens
+      .replace(/\s+/g, ' ')      // Normalize multiple spaces
+      .trim();
+  }
+
+  /**
+   * 📝 Add common journal name variants for better matching
+   */
+  private addJournalVariants(normalizedTitle: string, ranking: JournalRanking): void {
+    // IEEE variants
+    if (normalizedTitle.includes('ieee transactions on')) {
+      const shortForm = normalizedTitle.replace('ieee transactions on', 'ieee trans');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+
+    // ACM variants
+    if (normalizedTitle.includes('acm transactions on')) {
+      const shortForm = normalizedTitle.replace('acm transactions on', 'acm trans');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+
+    // Journal of... variants
+    if (normalizedTitle.startsWith('journal of ')) {
+      const shortForm = normalizedTitle.replace('journal of ', 'j ');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+
+    // International Journal of... variants
+    if (normalizedTitle.includes('international journal of')) {
+      const shortForm = normalizedTitle.replace('international journal of', 'int j');
+      if (!this.journalRankingCache.has(shortForm)) {
+        this.journalRankingCache.set(shortForm, ranking);
+      }
+    }
+  }
+
+  /**
+   * 🔍 Find best matching journal using fuzzy logic (3 strategies)
+   */
+  private findBestJournalMatch(venueName: string): JournalRanking | null {
+    const normalized = this.normalizeJournalName(venueName);
+    
+    // Strategy 1: Exact match
+    if (this.journalRankingCache.has(normalized)) {
+      return this.journalRankingCache.get(normalized)!;
+    }
+
+    // Strategy 2: Substring match (venue contains journal name or vice versa)
+    for (const [key, ranking] of this.journalRankingCache.entries()) {
+      if (normalized.includes(key) || key.includes(normalized)) {
+        if (Math.abs(normalized.length - key.length) < 15) { // Similar length
+          return ranking;
+        }
+      }
+    }
+
+    // Strategy 3: Word overlap (at least 60% of significant words match)
+    const venueWords = normalized.split(' ').filter(w => w.length > 3);
+    if (venueWords.length === 0) return null;
+
+    let bestMatch: JournalRanking | null = null;
+    let bestScore = 0;
+
+    for (const [key, ranking] of this.journalRankingCache.entries()) {
+      const keyWords = key.split(' ').filter(w => w.length > 3);
+      const matchCount = venueWords.filter(vw => 
+        keyWords.some(kw => kw.includes(vw) || vw.includes(kw))
+      ).length;
+
+      const score = matchCount / Math.max(venueWords.length, keyWords.length);
+      
+      if (score > bestScore && score >= 0.6) { // At least 60% match
+        bestScore = score;
+        bestMatch = ranking;
+      }
+    }
+
+    return bestMatch;
+  }
 
 
 
@@ -226,7 +427,7 @@ export class PapersService {
 
     try {
       const metadata = await this.paperMetadataService.extractMetadata(
-        paper.doi || paper.url,
+          paper.url  ||paper.doi,
       );
 
       references = metadata.references || [];
@@ -342,69 +543,87 @@ export class PapersService {
    */
 
   /**
-   * Hàm tính điểm uy tín tạp chí ĐA LĨNH VỰC
-   * @param {string | null} venueName
+   * 🏆 Hàm tính điểm uy tín tạp chí dựa trên ScimagoJR 2024 Ranking
+   * 
+   * Công thức:
+   * S_venue = {
+   *   20 nếu V ∈ Tier_High    (SJR >= 5)
+   *   10 nếu V ∈ Tier_Mid     (1 <= SJR < 5)
+   *   5  nếu V có tên nhưng không trong ranking
+   *   0  nếu V = null/empty
+   * }
+   * 
+   * @param {string | null} venueName - Tên tạp chí/hội nghị
    * @returns {number} (0, 5, 10, 20)
    */
   private getJournalScore(venueName: string | null): number {
     // 1. Mức 0 điểm: Null hoặc rỗng
     if (!venueName || venueName.trim() === '') return 0;
 
-    let name = venueName.toLowerCase().trim();
+    // 2. Nếu đã load ranking từ ScimagoJR, dùng dữ liệu thực
+    if (this.journalRankingLoaded) {
+      const ranking = this.findBestJournalMatch(venueName);
+      
+      if (ranking) {
+        // Tính điểm dựa trên SJR score
+        let score = 0;
 
-    // Chuẩn hóa một số tên viết tắt phổ biến
-    const mapping = {
-      'institute of electrical and electronics engineers': 'ieee',
-      'proceedings of the national academy of sciences': 'pnas',
-      'new england journal of medicine': 'nejm',
-      'journal of the american chemical society': 'jacs',
-      'american economic review': 'aer'
-    };
-    for (const [full, abbr] of Object.entries(mapping)) {
-      if (name.includes(full)) name = name.replace(full, abbr);
+        // Tier classification based on SJR
+        if (ranking.sjr >= 5) {
+          // Tier High: SJR >= 5 → 20 điểm
+          score = 20;
+          this.logger.debug(
+            `  📊 ScimagoJR Match [HIGH]: "${ranking.title}" ` +
+            `(Rank: #${ranking.rank}, SJR: ${ranking.sjr.toFixed(3)}, ${ranking.quartile}) → ${score}/20`
+          );
+        } else if (ranking.sjr >= 1) {
+          // Tier Mid: 1 <= SJR < 5 → 10 điểm
+          score = 10;
+          this.logger.debug(
+            `  📊 ScimagoJR Match [MID]: "${ranking.title}" ` +
+            `(Rank: #${ranking.rank}, SJR: ${ranking.sjr.toFixed(3)}, ${ranking.quartile}) → ${score}/20`
+          );
+        } else {
+          // Basic: SJR < 1 → 5 điểm
+          score = 5;
+          this.logger.debug(
+            `  📊 ScimagoJR Match [BASIC]: "${ranking.title}" ` +
+            `(Rank: #${ranking.rank}, SJR: ${ranking.sjr.toFixed(3)}, ${ranking.quartile}) → ${score}/20`
+          );
+        }
+
+        return score;
+      }
+
+      // Không tìm thấy trong ranking → 5 điểm (có tên venue nhưng không xác định được)
+      this.logger.debug(
+        `  ⚠️ No ScimagoJR match for: "${venueName}" → Fallback: 5/20 (Basic)`
+      );
+      return 5;
     }
 
-    // --- DANH SÁCH TỪ KHÓA TOP TIER (20 ĐIỂM) ---
+    // 3. FALLBACK: Nếu CSV chưa load được, dùng keyword-based scoring
+    this.logger.debug(`  ⚠️ ScimagoJR not loaded, using keyword-based fallback for: "${venueName}"`);
+    
+    const name = venueName.toLowerCase().trim();
+
+    // Top-tier keywords (20 điểm) - cho các tạp chí siêu nổi tiếng
     const highTierKeywords = [
-      // >> Khoa học tổng quát (Super Prestigious)
-      'nature', 'science', 'pnas',
-
-      // >> Y sinh & Sức khỏe (Medicine & Biology)
-      'cell', 'lancet', 'nejm', 'jama', 'bmj',
-      'brain', 'circulation', // Tim mạch/Thần kinh top đầu
-
-      // >> Kinh tế & Tài chính (Economics & Finance)
-      'aer', 'econometrica', 'quarterly journal of economics', // Top 5 Econ
-      'journal of finance', 'review of financial studies',
-      'harvard business review', // (Tùy quan điểm, nhưng rất nổi tiếng)
-
-      // >> Vật lý & Hóa học (Physics & Chem)
-      'physical review letters', 'reviews of modern physics',
-      'jacs', 'angewandte chemie', 'advanced materials',
-
-      // >> Kỹ thuật & CS (Tech)
+      'nature', 'science', 'cell', 'lancet', 'nejm', 'pnas',
       'ieee transactions', 'acm transactions',
-      'neurips', 'icml', 'cvpr' // Vẫn giữ vài cái đỉnh của IT
+      'neurips', 'icml', 'cvpr', 'iclr'
     ];
 
-    // --- DANH SÁCH TỪ KHÓA MID TIER (10 ĐIỂM) ---
+    // Mid-tier keywords (10 điểm)
     const midTierKeywords = [
-      // >> Các Nhà xuất bản uy tín (Publisher)
-      // Nếu bài báo thuộc các NXB này thì auto 10 điểm (nếu k lọt vào top 20)
-      'elsevier', 'springer', 'wiley', 'taylor & francis',
-      'sage', 'oxford university press', 'cambridge university press',
-      'ieee', 'acm', 'asme', // Kỹ thuật cơ khí
-      'acs', 'rsc', // Hóa học (trừ những cái top hẳn ra)
-
-      // >> Tạp chí Mega-journal phổ biến
-      'plos one', 'scientific reports', 'frontiers in', 'mdpi', 'hindawi'
+      'ieee', 'acm', 'springer', 'elsevier', 'wiley',
+      'plos one', 'scientific reports', 'frontiers in'
     ];
 
-    // --- LOGIC TÍNH ĐIỂM ---
     if (highTierKeywords.some(k => name.includes(k))) return 20;
     if (midTierKeywords.some(k => name.includes(k))) return 10;
 
-    // Mức 5 điểm: Có tên nhưng lạ / Tạp chí địa phương
+    // Có tên venue nhưng không xác định được = 5 điểm
     return 5;
   }
 
